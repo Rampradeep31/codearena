@@ -1,6 +1,7 @@
 # Environment
 .env
 *.env.local
+*.db
 
 # Python
 __pycache__/
