@@ -98,7 +98,9 @@ const parseUTC = (str) => {
 
   // ─── Timer ─────────────────────────────────────
   useEffect(() => {
-    if (timeLeft <= 0 && attempt) {
+    if (loading || !attempt) return;
+
+    if (timeLeft <= 0) {
       handleAutoSubmit('time_expired');
       return;
     }
@@ -113,7 +115,7 @@ const parseUTC = (str) => {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [timeLeft > 0]);
+  }, [loading, attempt, timeLeft]);
 
   // ─── Auto Save ────────────────────────────────
   useEffect(() => {
@@ -137,11 +139,26 @@ const parseUTC = (str) => {
     } catch { /* silent fail for auto-save */ }
   };
 
+  const mountTime = useRef(Date.now());
+  const hasEnteredFullscreen = useRef(false);
+
   // ─── Violation Monitoring ─────────────────────
   useEffect(() => {
-    const handleVisibility = () => { if (document.hidden) recordViolation('tab_hidden'); };
-    const handleBlur = () => { recordViolation('window_blur'); };
-    const handleFullscreenChange = () => { if (!document.fullscreenElement) recordViolation('fullscreen_exit'); };
+    const handleVisibility = () => {
+      if (Date.now() - mountTime.current < 5000) return;
+      if (document.hidden) recordViolation('tab_hidden');
+    };
+    const handleBlur = () => {
+      if (Date.now() - mountTime.current < 5000) return;
+      recordViolation('window_blur');
+    };
+    const handleFullscreenChange = () => {
+      if (document.fullscreenElement) {
+        hasEnteredFullscreen.current = true;
+      } else if (hasEnteredFullscreen.current && Date.now() - mountTime.current > 5000) {
+        recordViolation('fullscreen_exit');
+      }
+    };
 
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
