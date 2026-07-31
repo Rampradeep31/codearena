@@ -16,12 +16,26 @@ async def lifespan(app: FastAPI):
     yield
 
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+import traceback
+
 app = FastAPI(
     title="CodeArena API",
     description="Online Coding Assessment Platform",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    print("GLOBAL EXCEPTION LOG:", tb)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "traceback": tb},
+    )
 
 # CORS
 origins = [o.strip() for o in settings.CORS_ORIGINS.split(",")]
