@@ -10,6 +10,7 @@ if not settings.DATABASE_URL.startswith("sqlite"):
         "max_overflow": 10,
         "pool_pre_ping": True,
         "pool_recycle": 3600,
+        "connect_args": {"ssl": "require"},
     })
 
 engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
@@ -39,10 +40,13 @@ async def get_db() -> AsyncSession:
 
 
 async def create_tables():
-    """Create all tables. Used during development."""
-    async with engine.begin() as conn:
-        from app.models import user, test, question, attempt, violation  # noqa: F401
-        await conn.run_sync(Base.metadata.create_all)
+    """Create all tables on startup if they do not exist."""
+    try:
+        async with engine.begin() as conn:
+            from app.models import user, test, question, attempt, violation  # noqa: F401
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception as e:
+        print(f"Startup table check warning: {e}")
 
 
 async def drop_tables():
