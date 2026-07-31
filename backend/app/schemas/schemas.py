@@ -9,13 +9,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    role: str
-    user: "UserOut"
-
-
 # ─── User / Student ───────────────────────────────────
 class UserOut(BaseModel):
     id: int
@@ -30,6 +23,13 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    user: UserOut
 
 
 class StudentCreate(BaseModel):
