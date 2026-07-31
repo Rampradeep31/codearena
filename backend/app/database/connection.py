@@ -3,8 +3,10 @@ from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
 
+db_url = settings.DATABASE_URL.strip()
+
 engine_kwargs = {"echo": False}
-if not settings.DATABASE_URL.startswith("sqlite"):
+if not db_url.startswith("sqlite"):
     engine_kwargs.update({
         "pool_size": 20,
         "max_overflow": 10,
@@ -13,7 +15,7 @@ if not settings.DATABASE_URL.startswith("sqlite"):
         "connect_args": {"ssl": "require"},
     })
 
-engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
+engine = create_async_engine(db_url, **engine_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
