@@ -77,10 +77,19 @@ export default function ExamInterface() {
         lastSavedCode.current = saved.saved_code || '';
       }
 
-      // Calculate time left
-      const expiresAt = new Date(att.expires_at).getTime();
+const parseUTC = (str) => {
+  if (!str) return Date.now();
+  if (typeof str === 'number') return str;
+  const s = String(str).trim();
+  const hasTZ = s.endsWith('Z') || s.includes('+') || (s.lastIndexOf('-') > 10);
+  return new Date(hasTZ ? s : `${s}Z`).getTime();
+};
+
+      // Calculate time left (ensuring UTC parsing)
+      const expiresAt = parseUTC(att.expires_at);
       const now = Date.now();
-      setTimeLeft(Math.max(0, Math.floor((expiresAt - now) / 1000)));
+      const diffSec = Math.floor((expiresAt - now) / 1000);
+      setTimeLeft(Math.max(0, diffSec));
     } catch (err) {
       toast.error('Error loading exam');
       console.error(err);
