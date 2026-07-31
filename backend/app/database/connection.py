@@ -12,7 +12,11 @@ if not db_url.startswith("sqlite"):
         "max_overflow": 10,
         "pool_pre_ping": True,
         "pool_recycle": 3600,
-        "connect_args": {"ssl": "require"},
+        "prepared_statement_cache_size": 0,
+        "connect_args": {
+            "ssl": "require",
+            "statement_cache_size": 0,
+        },
     })
 
 engine = create_async_engine(db_url, **engine_kwargs)
