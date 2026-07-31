@@ -12,10 +12,10 @@ if not db_url.startswith("sqlite"):
         "max_overflow": 10,
         "pool_pre_ping": True,
         "pool_recycle": 3600,
-        "prepared_statement_cache_size": 0,
         "connect_args": {
             "ssl": "require",
             "statement_cache_size": 0,
+            "prepared_statement_cache_size": 0,
         },
     })
 
