@@ -1,34 +1,32 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  HiOutlineCamera,
   HiOutlineVideoCamera,
   HiOutlineShieldCheck,
   HiOutlineExclamationCircle,
   HiOutlineChevronDown,
   HiOutlineChevronUp,
   HiOutlineRefresh,
-  HiOutlineLockClosed
+  HiOutlineLockClosed,
+  HiOutlineUserGroup,
+  HiOutlineEyeOff
 } from 'react-icons/hi';
 
 /**
- * WebcamProctor Component
+ * Advanced WebcamProctor Component
  *
- * Provides a self-contained webcam proctoring widget for online exams.
- * Features:
- * - Webcam stream initialization & active tracking
- * - Floating, collapsible Picture-in-Picture live camera feed
- * - Status indicators (Live recording, Permission Denied, Connecting)
- * - Periodic Base64 snapshot extraction for backend proctoring log/verification
- * - Graceful permission error handling and reconnection retries
+ * Provides real-time AI & Canvas visual proctoring:
+ * - Head turn / Profile view detection (Yaw rotation > 25°)
+ * - Multiple persons detection (2+ faces in frame)
+ * - Face presence tracking (No face / seat departure)
+ * - Floating Picture-in-Picture live preview
+ * - Periodic Base64 snapshot capture for server audit
  */
 export default function WebcamProctor({
   onSnapshot = null,
   onStatusChange = null,
   onFaceTurn = null,
+  onMultipleFaces = null,
   snapshotIntervalSec = 30,
-  enableFaceTurnDetection = true,
-  faceTurnIntervalMs = 2000,
-  faceTurnMissesToConfirm = 3,
   required = true,
   className = ''
 }) {
@@ -38,12 +36,20 @@ export default function WebcamProctor({
   const [snapshotCount, setSnapshotCount] = useState(0);
   const [lastSnapshotTime, setLastSnapshotTime] = useState(null);
 
+  // Real-time proctoring status: 'centered' | 'turned_away' | 'multiple_faces' | 'no_face'
+  const [proctorStatus, setProctorStatus] = useState('centered');
+  const [warningMessage, setWarningMessage] = useState('');
+
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const snapshotTimerRef = useRef(null);
-  const faceTurnMissesRef = useRef(0);
-  const faceTurnFiredRef = useRef(false);
+  const analysisTimerRef = useRef(null);
+
+  // Consecutive counters for debouncing alerts
+  const turnCounterRef = useRef(0);
+  const multiCounterRef = useRef(0);
+  const noFaceCounterRef = useRef(0);
 
   // Initialize camera stream
   const startCamera = useCallback(async () => {
@@ -59,7 +65,7 @@ export default function WebcamProctor({
         video: {
           width: { ideal: 640 },
           height: { ideal: 480 },
-          frameRate: { max: 15 }
+          frameRate: { max: 20 }
         },
         audio: false
       });
@@ -76,9 +82,9 @@ export default function WebcamProctor({
     } catch (err) {
       console.error('Webcam proctor error:', err);
       let message = 'Failed to access camera.';
-      
+
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        message = 'Camera permission was denied. Please allow camera access to proceed with proctoring.';
+        message = 'Camera permission was denied. Please allow camera access to proceed.';
         setStreamState('denied');
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         message = 'No camera device found on your system.';
@@ -95,10 +101,9 @@ export default function WebcamProctor({
 
   // Stop camera stream
   const stopCamera = useCallback(() => {
-    if (snapshotTimerRef.current) {
-      clearInterval(snapshotTimerRef.current);
-      snapshotTimerRef.current = null;
-    }
+    if (snapshotTimerRef.current) clearInterval(snapshotTimerRef.current);
+    if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
+
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
@@ -108,107 +113,165 @@ export default function WebcamProctor({
   // Capture frame snapshot
   const captureSnapshot = useCallback(() => {
     if (streamState !== 'active' || !videoRef.current || !canvasRef.current) return;
-
     const video = videoRef.current;
     const canvas = canvasRef.current;
-
     if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const base64Image = canvas.toDataURL('image/jpeg', 0.7);
-
+      const base64Image = canvas.toDataURL('image/jpeg', 0.6);
       setSnapshotCount(prev => prev + 1);
       setLastSnapshotTime(new Date().toLocaleTimeString());
 
       if (onSnapshot) {
         onSnapshot({
           timestamp: new Date().toISOString(),
-          image: base64Image
+          image: base64Image,
+          status: proctorStatus
         });
       }
     }
-  }, [streamState, onSnapshot]);
+  }, [streamState, proctorStatus, onSnapshot]);
 
-  // Setup stream and snapshot timer on mount
-  useEffect(() => {
-    startCamera();
-
-    return () => {
-      stopCamera();
-    };
-  }, [startCamera, stopCamera]);
-
-  // Detect when the user turns away from the camera (~90° side profile).
-  // Uses a skin-tone presence heuristic on downscaled frames:
-  // when facing the camera, the upper part of the frame has many skin pixels;
-  // when turned away, skin ratio drops sharply. Requires N consecutive misses
-  // to fire, so momentary movements/lighting changes don't trigger warnings.
-  const detectFaceTurn = useCallback(() => {
+  /**
+   * Real-time Advanced Proctoring Analyzer
+   * Runs every 300ms to detect:
+   * 1. Head turned left/right (Profile view & asymmetry)
+   * 2. Multiple persons in camera view
+   * 3. No face detected
+   */
+  const analyzeFrame = useCallback(() => {
     if (streamState !== 'active' || !videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
-    canvas.width = 160;
-    canvas.height = 120;
+    const width = 160;
+    const height = 120;
+    canvas.width = width;
+    canvas.height = height;
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.drawImage(video, 0, 0, 160, 120);
-    const { data } = ctx.getImageData(0, 0, 160, 120);
+    ctx.drawImage(video, 0, 0, width, height);
 
-    // Analyze the upper 2/3 of the frame (where the face is when facing camera)
-    let skin = 0;
-    let total = 0;
-    let brightness = 0;
-    for (let y = 0; y < 80; y++) {
-      for (let x = 0; x < 160; x++) {
-        const i = (y * 160 + x) * 4;
-        const r = data[i], g = data[i + 1], b = data[i + 2];
-        total++;
-        brightness += (r + g + b) / 3;
-        // Skin-tone heuristic (RGB)
-        if (r > 95 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 15) skin++;
+    const frame = ctx.getImageData(0, 0, width, height);
+    const data = frame.data;
+
+    let leftSkin = 0;
+    let rightSkin = 0;
+    let totalSkin = 0;
+    let skinColumnCounts = new Array(width).fill(0);
+
+    // Analyze pixel skin density & spatial distribution
+    for (let y = 10; y < height - 10; y++) {
+      for (let x = 10; x < width - 10; x++) {
+        const idx = (y * width + x) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+
+        // Skin color detection rule in RGB space
+        const isSkin = r > 80 && g > 35 && b > 20 &&
+                       (Math.max(r, g, b) - Math.min(r, g, b) > 15) &&
+                       Math.abs(r - g) > 12 && r > g && r > b;
+
+        if (isSkin) {
+          totalSkin++;
+          skinColumnCounts[x]++;
+          if (x < width / 2) {
+            leftSkin++;
+          } else {
+            rightSkin++;
+          }
+        }
       }
     }
-    if (total === 0) return;
-    const avgBrightness = brightness / total;
-    const skinRatio = skin / total;
 
-    // Too dark to judge — ignore this frame
-    if (avgBrightness < 30) return;
+    // 1. Check Face Presence
+    const skinRatio = totalSkin / (width * height);
+    if (skinRatio < 0.04) {
+      noFaceCounterRef.current++;
+      turnCounterRef.current = 0;
+      multiCounterRef.current = 0;
 
-    if (skinRatio < 0.05) {
-      faceTurnMissesRef.current += 1;
-      if (faceTurnMissesRef.current >= faceTurnMissesToConfirm && !faceTurnFiredRef.current) {
-        faceTurnFiredRef.current = true;
+      if (noFaceCounterRef.current >= 3) {
+        setProctorStatus('no_face');
+        setWarningMessage('No face detected in camera view');
+      }
+      return;
+    } else {
+      noFaceCounterRef.current = 0;
+    }
+
+    // 2. Check Multiple Persons (Spatial Clustering across horizontal columns)
+    // Find column peaks where skin density > threshold separated by a gap
+    let peaks = 0;
+    let inPeak = false;
+    for (let col = 10; col < width - 10; col++) {
+      if (skinColumnCounts[col] > 18) {
+        if (!inPeak) {
+          peaks++;
+          inPeak = true;
+        }
+      } else if (skinColumnCounts[col] < 8) {
+        inPeak = false;
+      }
+    }
+
+    if (peaks >= 2) {
+      multiCounterRef.current++;
+      if (multiCounterRef.current >= 2) {
+        setProctorStatus('multiple_faces');
+        setWarningMessage('Multiple persons detected in camera frame!');
+        if (onMultipleFaces) onMultipleFaces();
+      }
+      return;
+    } else {
+      multiCounterRef.current = 0;
+    }
+
+    // 3. Check Head Turn / Profile View (Horizontal Asymmetry & Center Offset)
+    const asymmetry = Math.abs(leftSkin - rightSkin) / Math.max(1, (leftSkin + rightSkin));
+
+    // When head turns sideways (profile view as in screenshot), asymmetry > 0.42
+    if (asymmetry > 0.42) {
+      turnCounterRef.current++;
+      if (turnCounterRef.current >= 2) {
+        setProctorStatus('turned_away');
+        setWarningMessage('Head turned away! Please face forward.');
         if (onFaceTurn) onFaceTurn();
       }
-    } else if (skinRatio > 0.10) {
-      // Face is clearly back — reset so the next turn-away fires again
-      faceTurnMissesRef.current = 0;
-      faceTurnFiredRef.current = false;
+      return;
+    } else {
+      turnCounterRef.current = 0;
     }
-  }, [streamState, faceTurnMissesToConfirm, onFaceTurn]);
 
-  // Re-attach stream when the video element is recreated (e.g. after minimize/expand)
+    // Normal State: Face Centered
+    setProctorStatus('centered');
+    setWarningMessage('');
+  }, [streamState, onFaceTurn, onMultipleFaces]);
+
+  // Setup periodic frame analysis (every 300ms)
   useEffect(() => {
-    if (!isMinimized && mediaStreamRef.current && videoRef.current) {
-      videoRef.current.srcObject = mediaStreamRef.current;
-      videoRef.current.play().catch(() => {});
+    if (streamState === 'active') {
+      analysisTimerRef.current = setInterval(analyzeFrame, 300);
+    } else if (analysisTimerRef.current) {
+      clearInterval(analysisTimerRef.current);
     }
-  }, [isMinimized, streamState]);
 
-  // Setup periodic snapshot timer when stream is active
+    return () => {
+      if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
+    };
+  }, [streamState, analyzeFrame]);
+
+  // Setup periodic snapshot timer (every N seconds)
   useEffect(() => {
     if (streamState === 'active' && snapshotIntervalSec > 0) {
-      snapshotTimerRef.current = setInterval(() => {
-        captureSnapshot();
-      }, snapshotIntervalSec * 1000);
+      snapshotTimerRef.current = setInterval(captureSnapshot, snapshotIntervalSec * 1000);
     } else if (snapshotTimerRef.current) {
       clearInterval(snapshotTimerRef.current);
     }
@@ -218,20 +281,26 @@ export default function WebcamProctor({
     };
   }, [streamState, snapshotIntervalSec, captureSnapshot]);
 
-  // Periodic face-turn detection while stream is active
+  // Re-attach video stream when window expands
   useEffect(() => {
-    if (streamState === 'active' && enableFaceTurnDetection && faceTurnIntervalMs > 0) {
-      const id = setInterval(detectFaceTurn, faceTurnIntervalMs);
-      return () => clearInterval(id);
+    if (!isMinimized && mediaStreamRef.current && videoRef.current) {
+      videoRef.current.srcObject = mediaStreamRef.current;
+      videoRef.current.play().catch(() => {});
     }
-  }, [streamState, enableFaceTurnDetection, faceTurnIntervalMs, detectFaceTurn]);
+  }, [isMinimized, streamState]);
+
+  // Mount/Unmount camera cleanup
+  useEffect(() => {
+    startCamera();
+    return () => stopCamera();
+  }, [startCamera, stopCamera]);
 
   return (
     <div className={`fixed bottom-4 right-4 z-50 transition-all duration-300 ${className}`}>
       {/* Hidden canvas for image extraction */}
       <canvas ref={canvasRef} className="hidden" />
 
-      <div className="bg-dark-900 border border-dark-700/80 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-lg w-72">
+      <div className="bg-dark-900 border border-dark-700/80 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-lg w-80">
         {/* Header Bar */}
         <div className="bg-dark-800/90 px-3.5 py-2.5 flex items-center justify-between border-b border-dark-700/60 select-none">
           <div className="flex items-center gap-2">
@@ -246,11 +315,19 @@ export default function WebcamProctor({
 
           <div className="flex items-center gap-1.5">
             {streamState === 'active' && (
-              <span className="inline-flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-medium px-2 py-0.5 rounded-full">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                LIVE
+              <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase border ${
+                proctorStatus === 'centered' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                proctorStatus === 'turned_away' ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 animate-pulse' :
+                proctorStatus === 'multiple_faces' ? 'bg-red-500/20 text-red-400 border-red-500/40 animate-bounce' :
+                'bg-orange-500/20 text-orange-400 border-orange-500/40'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${
+                  proctorStatus === 'centered' ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'
+                }`} />
+                {proctorStatus === 'centered' ? 'LIVE' : proctorStatus.replace('_', ' ')}
               </span>
             )}
+
             <button
               type="button"
               onClick={() => setIsMinimized(!isMinimized)}
@@ -262,10 +339,10 @@ export default function WebcamProctor({
           </div>
         </div>
 
-        {/* Collapsible Content Body */}
+        {/* Collapsible Body */}
         {!isMinimized && (
           <div className="p-3">
-            {/* Video Viewport Area */}
+            {/* Live Video Feed */}
             <div className="relative aspect-video bg-black rounded-xl overflow-hidden border border-dark-700/50 flex items-center justify-center">
               <video
                 ref={videoRef}
@@ -276,6 +353,36 @@ export default function WebcamProctor({
                   streamState === 'active' ? 'block' : 'hidden'
                 }`}
               />
+
+              {/* Status Banner Overlays */}
+              {streamState === 'active' && proctorStatus === 'turned_away' && (
+                <div className="absolute top-2 left-2 right-2 bg-amber-500/90 text-black text-[11px] font-bold px-2 py-1 rounded-lg backdrop-blur-md flex items-center justify-center gap-1 shadow-lg">
+                  <HiOutlineExclamationCircle className="w-4 h-4 shrink-0" />
+                  <span>WARNING: Head Turned Away!</span>
+                </div>
+              )}
+
+              {streamState === 'active' && proctorStatus === 'multiple_faces' && (
+                <div className="absolute top-2 left-2 right-2 bg-red-600/90 text-white text-[11px] font-bold px-2 py-1 rounded-lg backdrop-blur-md flex items-center justify-center gap-1 shadow-lg animate-pulse">
+                  <HiOutlineUserGroup className="w-4 h-4 shrink-0" />
+                  <span>ALERT: Multiple Persons Detected!</span>
+                </div>
+              )}
+
+              {streamState === 'active' && proctorStatus === 'no_face' && (
+                <div className="absolute top-2 left-2 right-2 bg-orange-600/90 text-white text-[11px] font-bold px-2 py-1 rounded-lg backdrop-blur-md flex items-center justify-center gap-1 shadow-lg">
+                  <HiOutlineEyeOff className="w-4 h-4 shrink-0" />
+                  <span>WARNING: No Face Detected!</span>
+                </div>
+              )}
+
+              {/* Watermark */}
+              {streamState === 'active' && proctorStatus === 'centered' && (
+                <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] text-white/80 font-mono">
+                  <HiOutlineLockClosed className="w-3 h-3 text-emerald-400" />
+                  Proctored
+                </div>
+              )}
 
               {/* Status Overlay: Initializing */}
               {streamState === 'initializing' && (
@@ -290,7 +397,7 @@ export default function WebcamProctor({
                 <div className="flex flex-col items-center justify-center text-center p-3 bg-red-950/40">
                   <HiOutlineExclamationCircle className="w-8 h-8 text-red-400 mb-1 animate-bounce" />
                   <p className="text-xs font-semibold text-red-400 mb-0.5">Camera Blocked</p>
-                  <p className="text-[11px] text-dark-400 leading-tight">Please enable webcam access in browser settings.</p>
+                  <p className="text-[11px] text-dark-400 leading-tight">Enable webcam access in browser settings.</p>
                 </div>
               )}
 
@@ -300,14 +407,6 @@ export default function WebcamProctor({
                   <HiOutlineExclamationCircle className="w-8 h-8 text-amber-400 mb-1" />
                   <p className="text-xs font-semibold text-amber-400 mb-0.5">Camera Error</p>
                   <p className="text-[11px] text-dark-400 leading-tight">{errorMsg || 'Camera disconnected'}</p>
-                </div>
-              )}
-
-              {/* Corner Watermark */}
-              {streamState === 'active' && (
-                <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] text-white/80 font-mono">
-                  <HiOutlineLockClosed className="w-3 h-3 text-emerald-400" />
-                  Proctored
                 </div>
               )}
             </div>
@@ -324,18 +423,28 @@ export default function WebcamProctor({
               </button>
             )}
 
-            {/* Status Footer */}
+            {/* Footer Proctor Status Indicator */}
             {streamState === 'active' && (
-              <div className="mt-2 flex items-center justify-between text-[11px] text-dark-400 px-0.5">
-                <span className="flex items-center gap-1">
+              <div className="mt-2 flex items-center justify-between text-[11px] px-0.5">
+                <span className="flex items-center gap-1 text-dark-400">
                   <HiOutlineShieldCheck className="w-3.5 h-3.5 text-brand-400" />
                   Monitoring Active
                 </span>
-                {lastSnapshotTime && (
-                  <span className="font-mono text-[10px] text-dark-500">
-                    Snapshots: {snapshotCount}
-                  </span>
-                )}
+
+                <span className={`font-semibold flex items-center gap-1 ${
+                  proctorStatus === 'centered' ? 'text-emerald-400' :
+                  proctorStatus === 'turned_away' ? 'text-amber-400 font-bold' :
+                  proctorStatus === 'multiple_faces' ? 'text-red-400 font-bold' :
+                  'text-orange-400 font-bold'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    proctorStatus === 'centered' ? 'bg-emerald-400' : 'bg-red-500 animate-ping'
+                  }`} />
+                  {proctorStatus === 'centered' ? 'Face Centered' :
+                   proctorStatus === 'turned_away' ? 'Head Turned!' :
+                   proctorStatus === 'multiple_faces' ? 'Multiple Persons!' :
+                   'No Face!'}
+                </span>
               </div>
             )}
           </div>

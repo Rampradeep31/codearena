@@ -216,10 +216,15 @@ export default function ExamInterface() {
   const faceTurnCountRef = useRef(0);
   const handleFaceTurn = async () => {
     const next = faceTurnCountRef.current + 1;
-    if (next > 2) return; // limit reached — server has already auto-submitted
+    if (next > 2) return; // limit reached
     faceTurnCountRef.current = next;
     setWarningMsg(`Warning ${next}/2: You turned away from the camera. Face the camera and look at your screen to continue.`);
     recordViolation('face_turned');
+  };
+
+  const handleMultipleFaces = async () => {
+    setWarningMsg('Warning: Multiple persons detected in camera view! Ensure only you are in frame.');
+    recordViolation('multiple_persons');
   };
 
   const requestFullscreen = () => {
@@ -604,7 +609,7 @@ export default function ExamInterface() {
         </div>
       )}
       {/* Floating Webcam Proctoring Widget */}
-      <WebcamProctor snapshotIntervalSec={30} onFaceTurn={handleFaceTurn} />
+      <WebcamProctor snapshotIntervalSec={30} onFaceTurn={handleFaceTurn} onMultipleFaces={handleMultipleFaces} />
     </div>
   );
 }
