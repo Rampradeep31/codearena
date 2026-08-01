@@ -15,12 +15,30 @@ import StudentDashboard from './pages/student/StudentDashboard';
 import ExamInstructions from './pages/student/ExamInstructions';
 import ExamInterface from './pages/student/ExamInterface';
 import TestComplete from './pages/student/TestComplete';
+import CameraTest from './pages/CameraTest';
+
+function getStoredUser() {
+  try {
+    const raw = localStorage.getItem('user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 function ProtectedRoute({ children, role }) {
   const { isAuthenticated, user, loading } = useAuth();
+  const tokenInStorage = localStorage.getItem('token');
+  const userInStorage = getStoredUser();
+
+  const activeUser = user || userInStorage;
+  const activeAuth = isAuthenticated || !!tokenInStorage;
+
   if (loading) return <LoadingScreen />;
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (role && user?.role !== role) return <Navigate to={user?.role === 'admin' ? '/admin' : '/student'} replace />;
+  if (!activeAuth) return <Navigate to="/login" replace />;
+  if (role && activeUser && activeUser.role !== role) {
+    return <Navigate to={activeUser.role === 'admin' ? '/admin' : '/student/tests/1/instructions'} replace />;
+  }
   return children;
 }
 
@@ -36,11 +54,9 @@ function LoadingScreen() {
 }
 
 export default function App() {
-  const { isAuthenticated, user } = useAuth();
-
   return (
     <Routes>
-      <Route path="/login" element={isAuthenticated ? <Navigate to={user?.role === 'admin' ? '/admin' : '/student'} /> : <Login />} />
+      <Route path="/login" element={<Login />} />
 
       {/* Admin Routes */}
       <Route path="/admin" element={<ProtectedRoute role="admin"><AdminLayout /></ProtectedRoute>}>
@@ -62,6 +78,9 @@ export default function App() {
       <Route path="/student/tests/:testId/instructions" element={<ProtectedRoute role="student"><ExamInstructions /></ProtectedRoute>} />
       <Route path="/student/exam/:attemptId" element={<ProtectedRoute role="student"><ExamInterface /></ProtectedRoute>} />
       <Route path="/student/exam/:attemptId/complete" element={<ProtectedRoute role="student"><TestComplete /></ProtectedRoute>} />
+
+      {/* Demo / Camera Test Route */}
+      <Route path="/camera-test" element={<CameraTest />} />
 
       {/* Default */}
       <Route path="*" element={<Navigate to="/login" replace />} />

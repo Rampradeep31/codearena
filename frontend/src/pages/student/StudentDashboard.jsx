@@ -13,9 +13,16 @@ export default function StudentDashboard() {
   useEffect(() => { loadTests(); }, []);
 
   const loadTests = async () => {
-    try { const res = await studentAPI.getTests(); setTests(res.data); }
-    catch { console.error('Error loading tests'); }
-    finally { setLoading(false); }
+    try {
+      const res = await studentAPI.getTests();
+      if (res.data && (res.data.active?.length || res.data.upcoming?.length || res.data.completed?.length)) {
+        setTests(res.data);
+      }
+    } catch {
+      console.error('Failed to load tests');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogout = () => { logout(); navigate('/login', { replace: true }); };

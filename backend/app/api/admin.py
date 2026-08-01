@@ -19,8 +19,33 @@ from app.schemas.schemas import (
 )
 from app.security.dependencies import require_admin
 from app.security.hashing import hash_password
+from app.utils import ensure_aware
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
+
+async def _test_out(db: AsyncSession, test: Test) -> TestOut:
+    """Build a TestOut with question_count and question_ids attached."""
+    q_count = await db.execute(
+        select(func.count(TestQuestion.id)).where(TestQuestion.test_id == test.id)
+    )
+    q_ids = await db.execute(
+        select(TestQuestion.question_id).where(TestQuestion.test_id == test.id)
+    )
+    return TestOut(
+        id=test.id, name=test.name, description=test.description,
+        start_time=test.start_time, end_time=test.end_time,
+        duration_minutes=test.duration_minutes, total_marks=test.total_marks,
+        questions_per_student=test.questions_per_student,
+        easy_count=test.easy_count, medium_count=test.medium_count, hard_count=test.hard_count,
+        allowed_languages=test.allowed_languages,
+        max_violations=test.max_violations, allow_copy_paste=test.allow_copy_paste,
+        scoring_type=test.scoring_type if isinstance(test.scoring_type, str) else test.scoring_type.value,
+        show_results=test.show_results,
+        question_count=q_count.scalar() or 0,
+        question_ids=list(q_ids.scalars().all()),
+        created_at=test.created_at,
+    )
 
 
 # ─── Dashboard ────────────────────────────────────────
@@ -160,7 +185,11 @@ async def update_student(
     if "password" in update_data:
         student.password_hash = hash_password(update_data.pop("password"))
     if "status" in update_data:
-        student.is_active = update_data["status"] == "active"
+        new_status = update_data.pop("status")
+        if new_status not in ("active", "inactive"):
+            raise HTTPException(status_code=400, detail="status must be 'active' or 'inactive'")
+        student.status = UserStatus.ACTIVE if new_status == "active" else UserStatus.INACTIVE
+        student.is_active = new_status == "active"
 
     for field, value in update_data.items():
         setattr(student, field, value)
@@ -207,13 +236,31 @@ async def import_students_csv(
 
     created = 0
     errors = []
+    seen_regs = set()
+    seen_emails = set()
 
     for i, row in enumerate(reader, start=2):
         try:
             reg = row.get("register_number", "").strip()
             email = row.get("email", "").strip()
+            name = row.get("name", "").strip()
 
-            # Check duplicate
+            if not reg or not name:
+                errors.append(f"Row {i}: register_number and name are required")
+                continue
+
+            if reg in seen_regs:
+                errors.append(f"Row {i}: {reg} is a duplicate within the file")
+                continue
+            seen_regs.add(reg)
+
+            if email and email in seen_emails:
+                errors.append(f"Row {i}: {email} is a duplicate within the file")
+                continue
+            if email:
+                seen_emails.add(email)
+
+            # Check duplicate in database
             existing = await db.execute(
                 select(User).where(
                     (User.register_number == reg) | (User.email == email)
@@ -223,14 +270,18 @@ async def import_students_csv(
                 errors.append(f"Row {i}: {reg} already exists")
                 continue
 
+            year = None
+            if row.get("year"):
+                year = int(row["year"])
+
             student = User(
-                name=row.get("name", "").strip(),
+                name=name,
                 register_number=reg,
-                email=email,
+                email=email or f"{reg.lower()}@codearena.com",
                 password_hash=hash_password(row.get("password", reg).strip()),
                 role=UserRole.STUDENT,
                 department=row.get("department", "").strip() or None,
-                year=int(row["year"]) if row.get("year") else None,
+                year=year,
                 section=row.get("section", "").strip() or None,
                 status=UserStatus.ACTIVE,
                 is_active=True,
@@ -470,22 +521,7 @@ async def list_tests(
 
     output = []
     for t in tests:
-        q_count = await db.execute(
-            select(func.count(TestQuestion.id)).where(TestQuestion.test_id == t.id)
-        )
-        output.append(TestOut(
-            id=t.id, name=t.name, description=t.description,
-            start_time=t.start_time, end_time=t.end_time,
-            duration_minutes=t.duration_minutes, total_marks=t.total_marks,
-            questions_per_student=t.questions_per_student,
-            easy_count=t.easy_count, medium_count=t.medium_count, hard_count=t.hard_count,
-            allowed_languages=t.allowed_languages,
-            max_violations=t.max_violations, allow_copy_paste=t.allow_copy_paste,
-            scoring_type=t.scoring_type if isinstance(t.scoring_type, str) else t.scoring_type.value,
-            show_results=t.show_results,
-            question_count=q_count.scalar() or 0,
-            created_at=t.created_at,
-        ))
+        output.append(await _test_out(db, t))
 
     return output
 
@@ -497,6 +533,19 @@ async def create_test(
     admin: User = Depends(require_admin),
 ):
     """Create a new test with question pool."""
+    # Validate the question pool is large enough and all question ids exist
+    if len(data.question_ids) < data.questions_per_student:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Question pool has {len(data.question_ids)} questions but test requires {data.questions_per_student} per student",
+        )
+
+    pool_result = await db.execute(
+        select(func.count(Question.id)).where(Question.id.in_(data.question_ids))
+    )
+    if pool_result.scalar() != len(data.question_ids):
+        raise HTTPException(status_code=400, detail="One or more question ids do not exist")
+
     test = Test(
         name=data.name, description=data.description,
         start_time=data.start_time, end_time=data.end_time,
@@ -518,17 +567,7 @@ async def create_test(
 
     await db.flush()
 
-    return TestOut(
-        id=test.id, name=test.name, description=test.description,
-        start_time=test.start_time, end_time=test.end_time,
-        duration_minutes=test.duration_minutes, total_marks=test.total_marks,
-        questions_per_student=test.questions_per_student,
-        easy_count=test.easy_count, medium_count=test.medium_count, hard_count=test.hard_count,
-        allowed_languages=test.allowed_languages,
-        max_violations=test.max_violations, allow_copy_paste=test.allow_copy_paste,
-        scoring_type=data.scoring_type, show_results=test.show_results,
-        question_count=len(data.question_ids), created_at=test.created_at,
-    )
+    return await _test_out(db, test)
 
 
 @router.put("/tests/{test_id}", response_model=TestOut)
@@ -547,6 +586,14 @@ async def update_test(
     update_data = data.model_dump(exclude_unset=True)
     question_ids = update_data.pop("question_ids", None)
 
+    # Validate pool size if question pool is being replaced
+    qps = data.questions_per_student or test.questions_per_student
+    if question_ids is not None and len(question_ids) < qps:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Question pool has {len(question_ids)} questions but test requires {data.questions_per_student} per student",
+        )
+
     for field, value in update_data.items():
         setattr(test, field, value)
 
@@ -558,22 +605,7 @@ async def update_test(
     await db.flush()
     await db.refresh(test)
 
-    q_count = await db.execute(
-        select(func.count(TestQuestion.id)).where(TestQuestion.test_id == test.id)
-    )
-
-    return TestOut(
-        id=test.id, name=test.name, description=test.description,
-        start_time=test.start_time, end_time=test.end_time,
-        duration_minutes=test.duration_minutes, total_marks=test.total_marks,
-        questions_per_student=test.questions_per_student,
-        easy_count=test.easy_count, medium_count=test.medium_count, hard_count=test.hard_count,
-        allowed_languages=test.allowed_languages,
-        max_violations=test.max_violations, allow_copy_paste=test.allow_copy_paste,
-        scoring_type=test.scoring_type if isinstance(test.scoring_type, str) else test.scoring_type.value,
-        show_results=test.show_results,
-        question_count=q_count.scalar() or 0, created_at=test.created_at,
-    )
+    return await _test_out(db, test)
 
 
 @router.delete("/tests/{test_id}")
@@ -647,10 +679,12 @@ async def monitor_test(
         )
         questions_submitted = sub_count.scalar() or 0
 
+        last_activity = None
+
         # Determine status
         if attempt.status in ("submitted", "auto_submitted"):
             status_str = attempt.status
-        elif attempt.expires_at < now:
+        elif ensure_aware(attempt.expires_at) < now:
             status_str = "auto_submitted"
         else:
             # Check last activity
@@ -662,12 +696,13 @@ async def monitor_test(
             )
             last_activity = last_code.scalar_one_or_none()
 
-            if last_activity and (now - last_activity).total_seconds() > 120:
+            if last_activity and (now - ensure_aware(last_activity)).total_seconds() > 120:
                 status_str = "disconnected"
             else:
                 status_str = "writing"
 
-        remaining = max(0, int((attempt.expires_at - now).total_seconds())) if attempt.expires_at > now else 0
+        expires_at = ensure_aware(attempt.expires_at)
+        remaining = max(0, int((expires_at - now).total_seconds())) if expires_at > now else 0
 
         rows.append(StudentMonitorRow(
             student_id=student.id,
@@ -678,7 +713,7 @@ async def monitor_test(
             questions_submitted=questions_submitted,
             violation_count=attempt.violation_count,
             remaining_seconds=remaining,
-            last_activity=last_activity if 'last_activity' in dir() else None,
+            last_activity=last_activity,
         ))
 
     return rows

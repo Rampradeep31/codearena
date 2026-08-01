@@ -8,19 +8,26 @@ export default function ExamInstructions() {
   const { testId } = useParams();
   const navigate = useNavigate();
   const [test, setTest] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
 
   useEffect(() => { loadTest(); }, [testId]);
 
   const loadTest = async () => {
+    setLoadError('');
     try {
       const res = await studentAPI.getTests();
-      const all = [...res.data.active, ...res.data.upcoming, ...res.data.completed];
+      const all = [...(res.data.active || []), ...(res.data.upcoming || []), ...(res.data.completed || [])];
       const found = all.find(t => t.id === parseInt(testId));
-      if (found) setTest(found);
-      else toast.error('Test not found');
-    } catch { toast.error('Error loading test'); }
+      if (!found) {
+        setLoadError('Test not found. Please check with your instructor.');
+        return;
+      }
+      setTest(found);
+    } catch {
+      setLoadError('Failed to load test details. Check your connection and try again.');
+    }
   };
 
   const handleStart = async () => {
@@ -30,9 +37,21 @@ export default function ExamInstructions() {
       toast.success('Test started!');
       navigate(`/student/exam/${res.data.id}`, { replace: true });
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error starting test');
+      toast.error(err.response?.data?.detail || 'Failed to start the test. Please try again.');
     } finally { setStarting(false); }
   };
+
+  if (loadError) return (
+    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
+      <div className="bg-dark-900 border border-dark-700/50 rounded-2xl p-8 max-w-md w-full text-center animate-fade-in">
+        <h1 className="text-xl font-bold text-white mb-3">Cannot Load Test</h1>
+        <p className="text-sm text-dark-400 mb-6">{loadError}</p>
+        <button onClick={loadTest} className="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-colors">
+          Try Again
+        </button>
+      </div>
+    </div>
+  );
 
   if (!test) return (
     <div className="min-h-screen bg-dark-950 flex items-center justify-center">

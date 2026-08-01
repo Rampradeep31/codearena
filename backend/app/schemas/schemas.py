@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -7,6 +7,14 @@ from datetime import datetime
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class StudentEntryRequest(BaseModel):
+    name: str
+    register_number: str
+    department: Optional[str] = "AI & DS"
+    section: Optional[str] = "A"
+    year: Optional[str] = "1st Year"
 
 
 # ─── User / Student ───────────────────────────────────
@@ -93,6 +101,12 @@ class QuestionCreate(BaseModel):
     explanation: Optional[str] = None
     test_cases: List[TestCaseCreate] = []
 
+    @model_validator(mode="after")
+    def validate_difficulty(self):
+        if self.difficulty not in ("easy", "medium", "hard"):
+            raise ValueError("difficulty must be one of: easy, medium, hard")
+        return self
+
 
 class QuestionUpdate(BaseModel):
     title: Optional[str] = None
@@ -167,6 +181,19 @@ class TestCreate(BaseModel):
     show_results: bool = False
     question_ids: List[int] = []
 
+    @model_validator(mode="after")
+    def validate_test(self):
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be after start_time")
+        window_minutes = (self.end_time - self.start_time).total_seconds() / 60
+        if self.duration_minutes > window_minutes:
+            raise ValueError("duration_minutes cannot exceed the start/end window")
+        if self.easy_count + self.medium_count + self.hard_count > self.questions_per_student:
+            raise ValueError("easy_count + medium_count + hard_count cannot exceed questions_per_student")
+        if self.scoring_type not in ("partial", "all_or_nothing"):
+            raise ValueError("scoring_type must be 'partial' or 'all_or_nothing'")
+        return self
+
 
 class TestUpdate(BaseModel):
     name: Optional[str] = None
@@ -205,6 +232,7 @@ class TestOut(BaseModel):
     scoring_type: str
     show_results: bool
     question_count: Optional[int] = None
+    question_ids: Optional[List[int]] = None
     created_at: Optional[datetime] = None
 
     class Config:
@@ -224,6 +252,7 @@ class AttemptOut(BaseModel):
     submission_reason: Optional[str] = None
     total_score: Optional[float] = None
     total_possible: Optional[float] = None
+    max_violations: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -298,6 +327,17 @@ class ViolationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ViolationRecorded(BaseModel):
+    """Response returned after recording a violation, with authoritative counts."""
+    id: int
+    attempt_id: int
+    violation_type: str
+    created_at: datetime
+    violation_count: int
+    max_violations: int
+    auto_submitted: bool
 
 
 # ─── Dashboard / Monitoring ──────────────────────────

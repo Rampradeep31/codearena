@@ -4,6 +4,7 @@ import Editor from '@monaco-editor/react';
 import { useAuth } from '../../context/AuthContext';
 import { studentAPI, codeAPI } from '../../services/api';
 import toast from 'react-hot-toast';
+import WebcamProctor from '../../components/WebcamProctor';
 import {
   HiOutlineCode, HiOutlinePlay, HiOutlineUpload, HiOutlineClock,
   HiOutlineChevronLeft, HiOutlineChevronRight, HiOutlineShieldExclamation,
@@ -38,6 +39,7 @@ export default function ExamInterface() {
   const [warningMsg, setWarningMsg] = useState('');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   // Refs
   const autoSaveTimer = useRef(null);
@@ -59,7 +61,7 @@ export default function ExamInterface() {
       ]);
       const att = attemptRes.data;
       setAttempt(att);
-      setViolationCount(att.violation_count);
+      setViolationCount(att.violation_count || 0);
 
       if (att.status === 'submitted' || att.status === 'auto_submitted') {
         navigate(`/student/exam/${attemptId}/complete`, { replace: true });
@@ -67,9 +69,13 @@ export default function ExamInterface() {
       }
 
       const qs = questionsRes.data;
+      if (!qs || qs.length === 0) {
+        setLoadError('No questions were assigned for this attempt. Please contact your instructor.');
+        setLoading(false);
+        return;
+      }
       setQuestions(qs);
 
-      // Restore saved code for first question
       if (qs.length > 0) {
         const saved = qs[0];
         setLanguage(saved.saved_language || 'python');
@@ -77,30 +83,31 @@ export default function ExamInterface() {
         lastSavedCode.current = saved.saved_code || '';
       }
 
-const parseUTC = (str) => {
-  if (!str) return Date.now();
-  if (typeof str === 'number') return str;
-  const s = String(str).trim();
-  const hasTZ = s.endsWith('Z') || s.includes('+') || (s.lastIndexOf('-') > 10);
-  return new Date(hasTZ ? s : `${s}Z`).getTime();
-};
+      const parseUTC = (str) => {
+        if (!str) return Date.now();
+        if (typeof str === 'number') return str;
+        const s = String(str).trim();
+        const hasTZ = s.endsWith('Z') || s.includes('+') || (s.lastIndexOf('-') > 10);
+        return new Date(hasTZ ? s : `${s}Z`).getTime();
+      };
 
-      // Calculate time left (ensuring UTC parsing)
-      const expiresAt = parseUTC(att.expires_at);
+      const expiresAt = parseUTC(att.expires_at || (Date.now() + 3600000));
       const now = Date.now();
       const diffSec = Math.floor((expiresAt - now) / 1000);
       setTimeLeft(Math.max(0, diffSec));
     } catch (err) {
-      toast.error('Error loading exam');
-      console.error(err);
+      setLoadError(err.response?.data?.detail || 'Failed to load the examination. Please check your connection.');
     } finally { setLoading(false); }
   };
 
   // ─── Timer ─────────────────────────────────────
+  const autoSubmittedRef = useRef(false);
+
   useEffect(() => {
-    if (loading || !attempt) return;
+    if (loading || !attempt || autoSubmittedRef.current) return;
 
     if (timeLeft <= 0) {
+      autoSubmittedRef.current = true;
       handleAutoSubmit('time_expired');
       return;
     }
@@ -108,7 +115,10 @@ const parseUTC = (str) => {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          handleAutoSubmit('time_expired');
+          if (!autoSubmittedRef.current) {
+            autoSubmittedRef.current = true;
+            handleAutoSubmit('time_expired');
+          }
           return 0;
         }
         return prev - 1;
@@ -187,10 +197,12 @@ const parseUTC = (str) => {
 
     try {
       const res = await studentAPI.recordViolation(attemptId, { violation_type: type });
-      const newCount = violationCount + 1;
+      const data = res.data || {};
+      // Server is the source of truth for the count
+      const newCount = typeof data.violation_count === 'number' ? data.violation_count : violationCount + 1;
       setViolationCount(newCount);
 
-      if (newCount >= (attempt?.max_violations || 3)) {
+      if (data.auto_submitted || newCount >= (data.max_violations || attempt?.max_violations || 3)) {
         setWarningMsg('Maximum violations reached. Your test has been auto-submitted.');
         setTimeout(() => navigate(`/student/exam/${attemptId}/complete`, { replace: true }), 2000);
       } else if (newCount === 1) {
@@ -295,6 +307,18 @@ const parseUTC = (str) => {
       <div className="text-center">
         <div className="w-10 h-10 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
         <p className="text-dark-400">Loading examination...</p>
+      </div>
+    </div>
+  );
+
+  if (loadError) return (
+    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
+      <div className="bg-dark-900 border border-dark-700/50 rounded-2xl p-8 max-w-md w-full text-center animate-fade-in">
+        <h1 className="text-xl font-bold text-white mb-3">Cannot Load Examination</h1>
+        <p className="text-sm text-dark-400 mb-6">{loadError}</p>
+        <button onClick={() => { setLoading(true); setLoadError(''); loadAttempt(); }} className="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-colors">
+          Try Again
+        </button>
       </div>
     </div>
   );
@@ -426,7 +450,11 @@ const parseUTC = (str) => {
         <div className="flex-1 flex flex-col min-h-0">
           {/* Language Selector & Actions */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-dark-700/50 bg-dark-900/50">
-            <select value={language} onChange={(e) => { setLanguage(e.target.value); if (!code || code === LANG_MAP[language]?.template) setCode(LANG_MAP[e.target.value]?.template || ''); }}
+            <select value={language} onChange={(e) => {
+              const nextLang = e.target.value;
+              setLanguage(nextLang);
+              setCode(prev => (!prev || prev === LANG_MAP[language]?.template) ? (LANG_MAP[nextLang]?.template || '') : prev);
+            }}
               className="px-2 py-1 bg-dark-800 border border-dark-600/50 rounded text-xs text-white focus:outline-none focus:border-brand-500">
               {Object.entries(LANG_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
@@ -547,6 +575,8 @@ const parseUTC = (str) => {
           </div>
         </div>
       )}
+      {/* Floating Webcam Proctoring Widget */}
+      <WebcamProctor snapshotIntervalSec={30} />
     </div>
   );
 }

@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
+from sqlalchemy.exc import IntegrityError
 from app.database.connection import get_db
 from app.models.user import User
 from app.models.test import Test, TestQuestion
@@ -15,11 +16,27 @@ from app.models.attempt import (
 from app.models.violation import Violation
 from app.schemas.schemas import (
     TestOut, AttemptOut, StudentQuestionOut, QuestionStudentOut,
-    TestCasePublicOut, CodeSaveRequest, ViolationCreate, ViolationOut, UserOut,
+    TestCasePublicOut, CodeSaveRequest, ViolationCreate, ViolationRecorded, UserOut,
 )
 from app.security.dependencies import require_student
+from app.utils import ensure_aware
 
 router = APIRouter(prefix="/student", tags=["Student"])
+
+
+async def _attempt_out(db: AsyncSession, attempt: StudentAttempt) -> AttemptOut:
+    """Build AttemptOut with the test's max_violations attached."""
+    test = await db.execute(select(Test).where(Test.id == attempt.test_id))
+    test_row = test.scalar_one_or_none()
+    return AttemptOut(
+        id=attempt.id, student_id=attempt.student_id, test_id=attempt.test_id,
+        started_at=attempt.started_at, expires_at=attempt.expires_at,
+        submitted_at=attempt.submitted_at, status=attempt.status,
+        violation_count=attempt.violation_count,
+        submission_reason=attempt.submission_reason,
+        total_score=attempt.total_score, total_possible=attempt.total_possible,
+        max_violations=test_row.max_violations if test_row else 3,
+    )
 
 
 @router.get("/profile", response_model=UserOut)
@@ -68,8 +85,8 @@ async def get_student_tests(
             "id": t.id,
             "name": t.name,
             "description": t.description,
-            "start_time": t.start_time.isoformat(),
-            "end_time": t.end_time.isoformat(),
+            "start_time": ensure_aware(t.start_time).isoformat(),
+            "end_time": ensure_aware(t.end_time).isoformat(),
             "duration_minutes": t.duration_minutes,
             "total_marks": t.total_marks,
             "questions_per_student": t.questions_per_student,
@@ -84,10 +101,10 @@ async def get_student_tests(
             test_data["attempt_status"] = attempt.status
             test_data["attempt_submitted_at"] = attempt.submitted_at.isoformat() if attempt.submitted_at else None
 
-        if t.start_time > now:
+        if ensure_aware(t.start_time) > now:
             test_data["status"] = "upcoming"
             upcoming.append(test_data)
-        elif t.end_time < now or (attempt and attempt.status in ("submitted", "auto_submitted")):
+        elif ensure_aware(t.end_time) < now or (attempt and attempt.status in ("submitted", "auto_submitted")):
             test_data["status"] = "completed"
             completed.append(test_data)
         else:
@@ -113,9 +130,9 @@ async def start_test(
         raise HTTPException(status_code=404, detail="Test not found")
 
     # Validate test is active
-    if test.start_time > now:
+    if ensure_aware(test.start_time) > now:
         raise HTTPException(status_code=400, detail="Test has not started yet")
-    if test.end_time < now:
+    if ensure_aware(test.end_time) < now:
         raise HTTPException(status_code=400, detail="Test has already ended")
 
     # Check for existing attempt (idempotent)
@@ -129,14 +146,7 @@ async def start_test(
 
     if attempt:
         # Already started, return existing
-        return AttemptOut(
-            id=attempt.id, student_id=attempt.student_id, test_id=attempt.test_id,
-            started_at=attempt.started_at, expires_at=attempt.expires_at,
-            submitted_at=attempt.submitted_at, status=attempt.status,
-            violation_count=attempt.violation_count,
-            submission_reason=attempt.submission_reason,
-            total_score=attempt.total_score, total_possible=attempt.total_possible,
-        )
+        return await _attempt_out(db, attempt)
 
     # Get question pool grouped by difficulty
     pool_result = await db.execute(
@@ -168,12 +178,22 @@ async def start_test(
             raise HTTPException(status_code=400, detail=f"Not enough hard questions in pool ({len(hard)} < {test.hard_count})")
         selected.extend(random.sample(hard, test.hard_count))
 
+    if len(selected) > test.questions_per_student:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Difficulty counts ({test.easy_count}+{test.medium_count}+{test.hard_count}) exceed questions per student ({test.questions_per_student})",
+        )
+
     # If difficulty counts don't add up to questions_per_student, fill randomly
     if len(selected) < test.questions_per_student:
         remaining_pool = [q for q in pool if q not in selected]
         needed = test.questions_per_student - len(selected)
-        if len(remaining_pool) >= needed:
-            selected.extend(random.sample(remaining_pool, needed))
+        if len(remaining_pool) < needed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Not enough questions in pool ({len(pool)} < {test.questions_per_student})",
+            )
+        selected.extend(random.sample(remaining_pool, needed))
 
     # Randomize order
     random.shuffle(selected)
@@ -181,7 +201,7 @@ async def start_test(
     # Calculate expiry (minimum of duration or test end time)
     expires_at = min(
         now + timedelta(minutes=test.duration_minutes),
-        test.end_time,
+        ensure_aware(test.end_time),
     )
 
     # Create attempt
@@ -196,7 +216,19 @@ async def start_test(
         total_possible=sum(q.marks for q in selected),
     )
     db.add(attempt)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Concurrent start: another request already created the attempt
+        await db.rollback()
+        existing = await db.execute(
+            select(StudentAttempt).where(
+                StudentAttempt.student_id == user.id,
+                StudentAttempt.test_id == test_id,
+            )
+        )
+        attempt = existing.scalar_one()
+        return await _attempt_out(db, attempt)
     await db.refresh(attempt)
 
     # Create student questions
@@ -219,14 +251,7 @@ async def start_test(
 
     await db.flush()
 
-    return AttemptOut(
-        id=attempt.id, student_id=attempt.student_id, test_id=attempt.test_id,
-        started_at=attempt.started_at, expires_at=attempt.expires_at,
-        submitted_at=attempt.submitted_at, status=attempt.status,
-        violation_count=attempt.violation_count,
-        submission_reason=attempt.submission_reason,
-        total_score=attempt.total_score, total_possible=attempt.total_possible,
-    )
+    return await _attempt_out(db, attempt)
 
 
 @router.get("/attempts/{attempt_id}", response_model=AttemptOut)
@@ -246,14 +271,7 @@ async def get_attempt(
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    return AttemptOut(
-        id=attempt.id, student_id=attempt.student_id, test_id=attempt.test_id,
-        started_at=attempt.started_at, expires_at=attempt.expires_at,
-        submitted_at=attempt.submitted_at, status=attempt.status,
-        violation_count=attempt.violation_count,
-        submission_reason=attempt.submission_reason,
-        total_score=attempt.total_score, total_possible=attempt.total_possible,
-    )
+    return await _attempt_out(db, attempt)
 
 
 @router.get("/attempts/{attempt_id}/questions", response_model=List[StudentQuestionOut])
@@ -273,6 +291,13 @@ async def get_attempt_questions(
     attempt = attempt_result.scalar_one_or_none()
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
+
+    if attempt.status in ("submitted", "auto_submitted"):
+        raise HTTPException(status_code=400, detail="Attempt already submitted")
+
+    now = datetime.now(timezone.utc)
+    if now > ensure_aware(attempt.expires_at):
+        raise HTTPException(status_code=400, detail="Attempt has expired")
 
     # Get assigned questions
     sq_result = await db.execute(
@@ -366,7 +391,7 @@ async def save_code(
 
     # Check timer
     now = datetime.now(timezone.utc)
-    if now > attempt.expires_at:
+    if now > ensure_aware(attempt.expires_at):
         raise HTTPException(status_code=400, detail="Attempt has expired")
 
     # Update or create code entry
@@ -394,7 +419,7 @@ async def save_code(
     return {"message": "Code saved"}
 
 
-@router.post("/attempts/{attempt_id}/violations", response_model=ViolationOut)
+@router.post("/attempts/{attempt_id}/violations", response_model=ViolationRecorded)
 async def record_violation(
     attempt_id: int,
     data: ViolationCreate,
@@ -427,10 +452,14 @@ async def record_violation(
         )
     )
     if recent.scalar_one_or_none():
-        # Duplicate event, return existing count without incrementing
-        return ViolationOut(
+        # Duplicate event, return existing state without incrementing
+        test_result = await db.execute(select(Test).where(Test.id == attempt.test_id))
+        test = test_result.scalar_one_or_none()
+        return ViolationRecorded(
             id=0, attempt_id=attempt_id, violation_type=data.violation_type,
-            created_at=now,
+            created_at=now, violation_count=attempt.violation_count,
+            max_violations=test.max_violations if test else 3,
+            auto_submitted=False,
         )
 
     # Record violation
@@ -449,15 +478,20 @@ async def record_violation(
     test_result = await db.execute(select(Test).where(Test.id == attempt.test_id))
     test = test_result.scalar_one_or_none()
 
+    auto_submitted = False
     if test and attempt.violation_count >= test.max_violations:
         attempt.status = AttemptStatus.AUTO_SUBMITTED
         attempt.submitted_at = now
         attempt.submission_reason = SubmissionReason.VIOLATION_LIMIT
+        auto_submitted = True
         await db.flush()
 
-    return ViolationOut(
+    return ViolationRecorded(
         id=violation.id, attempt_id=violation.attempt_id,
         violation_type=violation.violation_type, created_at=violation.created_at,
+        violation_count=attempt.violation_count,
+        max_violations=test.max_violations if test else 3,
+        auto_submitted=auto_submitted,
     )
 
 
@@ -484,14 +518,22 @@ async def finish_test(
     now = datetime.now(timezone.utc)
     attempt.status = AttemptStatus.SUBMITTED
     attempt.submitted_at = now
-    attempt.submission_reason = SubmissionReason.MANUAL
+    # Auto-expiry vs manual finish
+    attempt.submission_reason = (
+        SubmissionReason.TIME_EXPIRED
+        if now > ensure_aware(attempt.expires_at)
+        else SubmissionReason.MANUAL
+    )
 
-    # Calculate total score from submissions
+    # Calculate total score from the LATEST submission per question (avoid double counting)
     subs_result = await db.execute(
         select(Submission).where(Submission.attempt_id == attempt_id)
     )
     submissions = subs_result.scalars().all()
-    attempt.total_score = sum(s.score for s in submissions)
+    scores_by_question = {}
+    for s in submissions:
+        scores_by_question[s.question_id] = s.score
+    attempt.total_score = sum(scores_by_question.values())
 
     await db.flush()
 

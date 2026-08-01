@@ -15,6 +15,7 @@ from app.schemas.schemas import (
 )
 from app.security.dependencies import require_student
 from app.services.execution_service import run_against_test_cases
+from app.utils import ensure_aware
 
 router = APIRouter(prefix="/code", tags=["Code Execution"])
 
@@ -42,7 +43,7 @@ async def run_code(
 
     # Check timer
     now = datetime.now(timezone.utc)
-    if now > attempt.expires_at:
+    if now > ensure_aware(attempt.expires_at):
         raise HTTPException(status_code=400, detail="Attempt has expired")
 
     # Verify question is assigned to this attempt
@@ -146,7 +147,7 @@ async def submit_code(
         raise HTTPException(status_code=400, detail="Attempt already submitted")
 
     now = datetime.now(timezone.utc)
-    if now > attempt.expires_at:
+    if now > ensure_aware(attempt.expires_at):
         raise HTTPException(status_code=400, detail="Attempt has expired")
 
     # Verify question assignment
@@ -198,15 +199,6 @@ async def submit_code(
     has_compilation_error = any(r["status"] == "compilation_error" for r in results)
 
     # Create or update submission
-    existing_sub = await db.execute(
-        select(Submission).where(
-            Submission.attempt_id == data.attempt_id,
-            Submission.question_id == data.question_id,
-        ).order_by(Submission.submitted_at.desc()).limit(1)
-    )
-    old_sub = existing_sub.scalar_one_or_none()
-    old_score = old_sub.score if old_sub else 0
-
     submission = Submission(
         attempt_id=data.attempt_id,
         question_id=data.question_id,
@@ -233,8 +225,16 @@ async def submit_code(
         )
         db.add(sr)
 
-    # Update attempt total score (replace old score for this question with new)
-    attempt.total_score = (attempt.total_score or 0) - old_score + score
+    # Update attempt total score: recompute from the LATEST submission per question.
+    # This is idempotent and immune to concurrent-submission double counting.
+    subs_result = await db.execute(
+        select(Submission).where(Submission.attempt_id == data.attempt_id)
+    )
+    all_submissions = subs_result.scalars().all()
+    latest_scores = {}
+    for s in all_submissions:
+        latest_scores[s.question_id] = s.score
+    attempt.total_score = sum(latest_scores.values())
 
     # Also save the code
     code_result = await db.execute(

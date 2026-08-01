@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime, Integer, Float, func, ForeignKey
+from sqlalchemy import String, Text, DateTime, Integer, Float, func, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database.connection import Base
 
@@ -37,6 +37,10 @@ class StudentAttempt(Base):
     submission_reason: Mapped[str] = mapped_column(String(20), nullable=True)
     total_score: Mapped[float] = mapped_column(Float, nullable=True, default=0)
     total_possible: Mapped[float] = mapped_column(Float, nullable=True, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "test_id", name="uq_student_test"),
+    )
 
 
 class StudentQuestion(Base):

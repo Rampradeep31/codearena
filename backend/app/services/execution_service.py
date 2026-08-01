@@ -46,7 +46,8 @@ async def execute_code(
         "stdin": stdin_b64,
         "expected_output": expected_b64 if expected_output else None,
         "cpu_time_limit": settings.CODE_TIMEOUT_SECONDS,
-        "memory_limit": settings.CODE_MEMORY_LIMIT_KB,
+        # Judge0's memory_limit is in bytes
+        "memory_limit": settings.CODE_MEMORY_LIMIT_KB * 1024,
         "enable_per_process_and_thread_memory_limit": True,
     }
 
@@ -166,11 +167,10 @@ async def run_against_test_cases(
 
         actual_output = result.get("output", "").strip()
         expected = tc.expected_output.strip()
-        passed = actual_output == expected and result["status"] in ("accepted", "wrong_answer")
 
-        # Override: if outputs match exactly, it's passed regardless of Judge0 status
-        if actual_output == expected:
-            passed = True
+        # A test case only passes when Judge0 reports success AND the outputs match.
+        # Never mark TLE/runtime-error/compilation-error as passed based on output alone.
+        passed = result["status"] == "accepted" and actual_output == expected
 
         results.append({
             "test_case_id": tc.id,

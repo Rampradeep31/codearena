@@ -34,7 +34,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     print("GLOBAL EXCEPTION LOG:", tb)
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc), "traceback": tb},
+        content={"detail": "Internal server error"},
     )
 
 # CORS
