@@ -213,18 +213,14 @@ export default function ExamInterface() {
     } catch { /* ignore */ }
   };
 
-  const faceTurnCountRef = useRef(0);
-  const handleFaceTurn = async () => {
-    const next = faceTurnCountRef.current + 1;
-    if (next > 2) return; // limit reached
-    faceTurnCountRef.current = next;
-    setWarningMsg(`Warning ${next}/2: You turned away from the camera. Face the camera and look at your screen to continue.`);
-    recordViolation('face_turned');
+  const handleFaceTurn = () => {
+    setWarningMsg('Warning: Head turned away! Please face forward and look at your screen.');
+    toast.error('Camera Warning: Please face forward!', { id: 'cam-warn-turn', duration: 4000 });
   };
 
-  const handleMultipleFaces = async () => {
+  const handleMultipleFaces = () => {
     setWarningMsg('Warning: Multiple persons detected in camera view! Ensure only you are in frame.');
-    recordViolation('multiple_persons');
+    toast.error('Camera Warning: Multiple persons detected!', { id: 'cam-warn-multi', duration: 4000 });
   };
 
   const requestFullscreen = () => {
