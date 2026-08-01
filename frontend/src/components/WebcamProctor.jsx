@@ -24,7 +24,11 @@ import {
 export default function WebcamProctor({
   onSnapshot = null,
   onStatusChange = null,
+  onFaceTurn = null,
   snapshotIntervalSec = 30,
+  enableFaceTurnDetection = true,
+  faceTurnIntervalMs = 2000,
+  faceTurnMissesToConfirm = 3,
   required = true,
   className = ''
 }) {
@@ -38,6 +42,8 @@ export default function WebcamProctor({
   const canvasRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const snapshotTimerRef = useRef(null);
+  const faceTurnMissesRef = useRef(0);
+  const faceTurnFiredRef = useRef(false);
 
   // Initialize camera stream
   const startCamera = useCallback(async () => {
@@ -137,6 +143,58 @@ export default function WebcamProctor({
     };
   }, [startCamera, stopCamera]);
 
+  // Detect when the user turns away from the camera (~90° side profile).
+  // Uses a skin-tone presence heuristic on downscaled frames:
+  // when facing the camera, the upper part of the frame has many skin pixels;
+  // when turned away, skin ratio drops sharply. Requires N consecutive misses
+  // to fire, so momentary movements/lighting changes don't trigger warnings.
+  const detectFaceTurn = useCallback(() => {
+    if (streamState !== 'active' || !videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+    canvas.width = 160;
+    canvas.height = 120;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, 160, 120);
+    const { data } = ctx.getImageData(0, 0, 160, 120);
+
+    // Analyze the upper 2/3 of the frame (where the face is when facing camera)
+    let skin = 0;
+    let total = 0;
+    let brightness = 0;
+    for (let y = 0; y < 80; y++) {
+      for (let x = 0; x < 160; x++) {
+        const i = (y * 160 + x) * 4;
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        total++;
+        brightness += (r + g + b) / 3;
+        // Skin-tone heuristic (RGB)
+        if (r > 95 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 15) skin++;
+      }
+    }
+    if (total === 0) return;
+    const avgBrightness = brightness / total;
+    const skinRatio = skin / total;
+
+    // Too dark to judge — ignore this frame
+    if (avgBrightness < 30) return;
+
+    if (skinRatio < 0.05) {
+      faceTurnMissesRef.current += 1;
+      if (faceTurnMissesRef.current >= faceTurnMissesToConfirm && !faceTurnFiredRef.current) {
+        faceTurnFiredRef.current = true;
+        if (onFaceTurn) onFaceTurn();
+      }
+    } else if (skinRatio > 0.10) {
+      // Face is clearly back — reset so the next turn-away fires again
+      faceTurnMissesRef.current = 0;
+      faceTurnFiredRef.current = false;
+    }
+  }, [streamState, faceTurnMissesToConfirm, onFaceTurn]);
+
   // Re-attach stream when the video element is recreated (e.g. after minimize/expand)
   useEffect(() => {
     if (!isMinimized && mediaStreamRef.current && videoRef.current) {
@@ -159,6 +217,14 @@ export default function WebcamProctor({
       if (snapshotTimerRef.current) clearInterval(snapshotTimerRef.current);
     };
   }, [streamState, snapshotIntervalSec, captureSnapshot]);
+
+  // Periodic face-turn detection while stream is active
+  useEffect(() => {
+    if (streamState === 'active' && enableFaceTurnDetection && faceTurnIntervalMs > 0) {
+      const id = setInterval(detectFaceTurn, faceTurnIntervalMs);
+      return () => clearInterval(id);
+    }
+  }, [streamState, enableFaceTurnDetection, faceTurnIntervalMs, detectFaceTurn]);
 
   return (
     <div className={`fixed bottom-4 right-4 z-50 transition-all duration-300 ${className}`}>

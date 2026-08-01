@@ -316,7 +316,7 @@ class CodeSubmitResponse(BaseModel):
 
 # ─── Violation ────────────────────────────────────────
 class ViolationCreate(BaseModel):
-    violation_type: str  # tab_hidden, window_blur, fullscreen_exit, copy_attempt, paste_attempt
+    violation_type: str  # tab_hidden, window_blur, fullscreen_exit, copy_attempt, paste_attempt, face_turned
 
 
 class ViolationOut(BaseModel):

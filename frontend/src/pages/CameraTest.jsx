@@ -5,9 +5,18 @@ import { HiOutlineCamera, HiOutlineShieldCheck, HiOutlinePhotograph } from 'reac
 export default function CameraTest() {
   const [snapshots, setSnapshots] = useState([]);
   const [status, setStatus] = useState('initializing');
+  const [faceTurnWarnings, setFaceTurnWarnings] = useState(0);
 
   const handleSnapshot = (data) => {
     setSnapshots(prev => [data, ...prev].slice(0, 6)); // Keep last 6 snapshots
+  };
+
+  const handleFaceTurn = () => {
+    setFaceTurnWarnings(prev => {
+      const next = prev + 1;
+      if (next <= 2) alert(`Warning ${next}/2: You turned away from the camera!`);
+      return next;
+    });
   };
 
   return (
@@ -52,7 +61,19 @@ export default function CameraTest() {
                 <li>Allow browser camera permission when prompted.</li>
                 <li>Try minimizing and expanding the camera overlay.</li>
                 <li>Watch snapshot thumbnails appear on the right in real time every 15 seconds.</li>
+                <li>Turn away from the camera (90°) for ~6s to trigger a face-turn warning.</li>
               </ul>
+            </div>
+
+            <div className="flex items-center justify-between bg-dark-800 rounded-xl p-4">
+              <span className="text-dark-300">Face-Turn Warnings (max 2)</span>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                faceTurnWarnings >= 2 ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                faceTurnWarnings === 1 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+              }`}>
+                {faceTurnWarnings} / 2
+              </span>
             </div>
           </div>
         </div>
@@ -90,6 +111,7 @@ export default function CameraTest() {
         snapshotIntervalSec={15}
         onSnapshot={handleSnapshot}
         onStatusChange={setStatus}
+        onFaceTurn={handleFaceTurn}
       />
     </div>
   );

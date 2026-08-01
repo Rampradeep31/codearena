@@ -213,6 +213,15 @@ export default function ExamInterface() {
     } catch { /* ignore */ }
   };
 
+  const faceTurnCountRef = useRef(0);
+  const handleFaceTurn = async () => {
+    const next = faceTurnCountRef.current + 1;
+    if (next > 2) return; // limit reached — server has already auto-submitted
+    faceTurnCountRef.current = next;
+    setWarningMsg(`Warning ${next}/2: You turned away from the camera. Face the camera and look at your screen to continue.`);
+    recordViolation('face_turned');
+  };
+
   const requestFullscreen = () => {
     try { document.documentElement.requestFullscreen?.(); }
     catch { /* ignore */ }
@@ -314,11 +323,30 @@ export default function ExamInterface() {
   if (loadError) return (
     <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
       <div className="bg-dark-900 border border-dark-700/50 rounded-2xl p-8 max-w-md w-full text-center animate-fade-in">
-        <h1 className="text-xl font-bold text-white mb-3">Cannot Load Examination</h1>
+        <h1 className="text-xl font-bold text-white mb-3">Assessment Reset Needed</h1>
         <p className="text-sm text-dark-400 mb-6">{loadError}</p>
-        <button onClick={() => { setLoading(true); setLoadError(''); loadAttempt(); }} className="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-colors">
-          Try Again
-        </button>
+        <div className="space-y-3">
+          <button
+            onClick={() => {
+              setLoadError('');
+              setAttempt({ id: Date.now(), violation_count: 0, max_violations: 3, status: 'in_progress' });
+              setQuestions(DEFAULT_QUESTIONS);
+              setLanguage('python');
+              setCode(LANG_MAP['python'].template);
+              setTimeLeft(3600);
+              setLoading(false);
+            }}
+            className="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-colors shadow-lg shadow-brand-500/20"
+          >
+            Start Fresh Assessment
+          </button>
+          <button
+            onClick={() => { setLoading(true); setLoadError(''); loadAttempt(); }}
+            className="w-full py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 text-xs rounded-xl transition-colors"
+          >
+            Try Refreshing Connection
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -576,7 +604,7 @@ export default function ExamInterface() {
         </div>
       )}
       {/* Floating Webcam Proctoring Widget */}
-      <WebcamProctor snapshotIntervalSec={30} />
+      <WebcamProctor snapshotIntervalSec={30} onFaceTurn={handleFaceTurn} />
     </div>
   );
 }

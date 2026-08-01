@@ -105,4 +105,22 @@ check("attempt now shows auto_submitted", client.get(f"/student/attempts/{attemp
 print("   attempt status:", client.get(f"/student/attempts/{attempt2}", headers=stu2_h).json()["status"])
 check("questions endpoint rejects submitted attempt", client.get(f"/student/attempts/{attempt2}/questions", headers=stu2_h), expected=400)
 
+# ── Face-turn limit (2) triggers auto-submit ────────────
+reg3 = f"STU{int(time.time()) % 100000 + 90000:05d}"
+r = client.post("/auth/student-entry", json={
+    "name": "FaceTurn User", "register_number": reg3, "department": "CSE", "section": "C", "year": "1st Year"})
+stu3_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+r = check("fresh student starts test", client.post(f"/student/tests/{test_id}/start", headers=stu3_h))
+attempt3 = r.json()["id"]
+
+r = check("1st face_turned violation (warning only)", client.post(f"/student/attempts/{attempt3}/violations",
+      headers=stu3_h, json={"violation_type": "face_turned"}))
+print("   response:", r.json())
+assert r.json()["auto_submitted"] is False, "should NOT auto-submit on 1st face turn"
+time.sleep(2.5)
+r = check("2nd face_turned violation (auto-submit)", client.post(f"/student/attempts/{attempt3}/violations",
+      headers=stu3_h, json={"violation_type": "face_turned"}))
+print("   response:", r.json())
+assert r.json()["auto_submitted"] is True, "should auto-submit on 2nd face turn (limit is 2)"
+
 print("\nSMOKE TEST COMPLETE")

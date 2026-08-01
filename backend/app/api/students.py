@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from sqlalchemy.exc import IntegrityError
 from app.database.connection import get_db
+from app.config import settings
 from app.models.user import User
 from app.models.test import Test, TestQuestion
 from app.models.question import Question, TestCase
@@ -145,7 +146,16 @@ async def start_test(
     attempt = existing.scalar_one_or_none()
 
     if attempt:
-        # Already started, return existing
+        # If attempt was submitted, reset it to in_progress so student can retake/continue
+        if attempt.status in (AttemptStatus.SUBMITTED, AttemptStatus.AUTO_SUBMITTED):
+            attempt.status = AttemptStatus.IN_PROGRESS
+            attempt.started_at = now
+            attempt.expires_at = now + timedelta(minutes=test.duration_minutes)
+            attempt.violation_count = 0
+            attempt.total_score = 0
+            attempt.submitted_at = None
+            await db.commit()
+            await db.refresh(attempt)
         return await _attempt_out(db, attempt)
 
     # Get question pool grouped by difficulty
@@ -292,8 +302,12 @@ async def get_attempt_questions(
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    if attempt.status in ("submitted", "auto_submitted"):
-        raise HTTPException(status_code=400, detail="Attempt already submitted")
+    if attempt.status in ("submitted", "auto_submitted", AttemptStatus.SUBMITTED, AttemptStatus.AUTO_SUBMITTED):
+        attempt.status = AttemptStatus.IN_PROGRESS
+        attempt.submitted_at = None
+        attempt.violation_count = 0
+        await db.commit()
+        await db.refresh(attempt)
 
     now = datetime.now(timezone.utc)
     if now > ensure_aware(attempt.expires_at):
@@ -474,12 +488,25 @@ async def record_violation(
     await db.flush()
     await db.refresh(violation)
 
-    # Check if violation limit reached — auto submit
+    # Check if violation limit reached — auto submit.
+    # face_turned (camera-away) has its own stricter limit (2).
     test_result = await db.execute(select(Test).where(Test.id == attempt.test_id))
     test = test_result.scalar_one_or_none()
 
+    limit_reached = False
+    if data.violation_type == "face_turned":
+        face_count_result = await db.execute(
+            select(func.count(Violation.id)).where(
+                Violation.attempt_id == attempt_id,
+                Violation.violation_type == "face_turned",
+            )
+        )
+        limit_reached = (face_count_result.scalar() or 0) >= settings.MAX_FACE_TURN_VIOLATIONS
+    elif test:
+        limit_reached = attempt.violation_count >= test.max_violations
+
     auto_submitted = False
-    if test and attempt.violation_count >= test.max_violations:
+    if limit_reached:
         attempt.status = AttemptStatus.AUTO_SUBMITTED
         attempt.submitted_at = now
         attempt.submission_reason = SubmissionReason.VIOLATION_LIMIT

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     # App Config
     MAX_VIOLATIONS_DEFAULT: int = 3
+    MAX_FACE_TURN_VIOLATIONS: int = 2
     CORS_ORIGINS: str = "http://localhost:5173"
     AUTO_SAVE_INTERVAL_SECONDS: int = 15
     SUBMISSION_GRACE_PERIOD_SECONDS: int = 5
