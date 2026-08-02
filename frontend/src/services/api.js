@@ -1,6 +1,5 @@
 import { supabase } from './supabaseClient';
 import axios from 'axios';
-import * as XLSX from 'xlsx';
 
 const backendApi = axios.create({
   baseURL: '/api',
@@ -863,6 +862,8 @@ export const adminAPI = {
       reader.onload = async (e) => {
         try {
           const data = e.target.result;
+          const xlsxModule = await import('xlsx');
+          const XLSX = xlsxModule.default || xlsxModule;
           const workbook = XLSX.read(data, { type: 'binary' });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
