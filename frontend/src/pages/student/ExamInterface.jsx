@@ -279,13 +279,23 @@ export default function ExamInterface() {
   const switchQuestion = (idx) => {
     if (idx === currentIdx) return;
     saveCode(); // Save current before switching
+    
+    setQuestions(prev => {
+      const newQs = [...prev];
+      if (newQs[currentIdx]) {
+        newQs[currentIdx] = { ...newQs[currentIdx], saved_code: code, saved_language: language };
+      }
+      
+      const q = newQs[idx];
+      if (q) {
+        setLanguage(q.saved_language || 'python');
+        setCode(q.saved_code || LANG_MAP[q.saved_language || 'python']?.template || '');
+        lastSavedCode.current = q.saved_code || '';
+      }
+      return newQs;
+    });
+
     setCurrentIdx(idx);
-    const q = questions[idx];
-    if (q) {
-      setLanguage(q.saved_language || 'python');
-      setCode(q.saved_code || LANG_MAP[q.saved_language || 'python']?.template || '');
-      lastSavedCode.current = q.saved_code || '';
-    }
     setRunResult(null);
   };
 
@@ -549,7 +559,7 @@ export default function ExamInterface() {
             <select value={language} onChange={(e) => {
               const nextLang = e.target.value;
               setLanguage(nextLang);
-              setCode(prev => (!prev || prev === LANG_MAP[language]?.template) ? (LANG_MAP[nextLang]?.template || '') : prev);
+              setCode(LANG_MAP[nextLang]?.template || '');
             }}
               className="px-2 py-1 bg-dark-800 border border-dark-600/50 rounded text-xs text-white focus:outline-none focus:border-brand-500">
               {Object.entries(LANG_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}

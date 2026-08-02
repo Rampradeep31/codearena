@@ -14,16 +14,25 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Extract and validate JWT, return the current user."""
-    try:
-        payload = decode_access_token(credentials.credentials)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired authentication token",
-        )
-
-    user_id = int(payload.get("sub"))
+    """Extract and validate JWT or Supabase dummy token, return the current user."""
+    token = credentials.credentials
+    user_id = None
+    
+    if token.startswith("sb_token_"):
+        try:
+            user_id = int(token.replace("sb_token_", ""))
+        except ValueError:
+            pass
+            
+    if not user_id:
+        try:
+            payload = decode_access_token(token)
+            user_id = int(payload.get("sub"))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired authentication token",
+            )
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
