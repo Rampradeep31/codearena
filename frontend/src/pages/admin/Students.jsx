@@ -64,7 +64,7 @@ export default function Students() {
     } catch (err) { toast.error('Error deleting student'); }
   };
 
-  const handleCSVImport = async (e) => {
+  const handleExcelImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     try {
@@ -72,7 +72,10 @@ export default function Students() {
       toast.success(`Imported ${res.data.created} students`);
       if (res.data.errors?.length) toast.error(`${res.data.errors.length} errors`);
       loadStudents();
-    } catch (err) { toast.error('CSV import failed'); }
+    } catch (err) { 
+      console.error("Excel import failed:", err);
+      toast.error('Excel import failed: ' + (err.message || err)); 
+    }
     fileRef.current.value = '';
   };
 
@@ -84,9 +87,9 @@ export default function Students() {
           <p className="text-dark-400 text-sm mt-1">Manage student accounts</p>
         </div>
         <div className="flex items-center gap-2">
-          <input type="file" ref={fileRef} accept=".csv" onChange={handleCSVImport} className="hidden" />
+          <input type="file" ref={fileRef} accept=".xlsx,.xls" onChange={handleExcelImport} className="hidden" />
           <button onClick={() => fileRef.current.click()} className="flex items-center gap-2 px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-dark-300 hover:text-white hover:border-dark-500 transition-all">
-            <HiOutlineUpload className="w-4 h-4" /> Import CSV
+            <HiOutlineUpload className="w-4 h-4" /> Import Excel
           </button>
           <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition-colors">
             <HiOutlinePlus className="w-4 h-4" /> Add Student
@@ -122,7 +125,9 @@ export default function Students() {
                   <td className="px-4 py-3 text-sm text-dark-300 font-mono">{s.register_number}</td>
                   <td className="px-4 py-3 text-sm text-dark-300">{s.email}</td>
                   <td className="px-4 py-3 text-sm text-dark-400">{s.department || '—'}</td>
-                  <td className="px-4 py-3 text-sm text-dark-400">{s.year || '—'}</td>
+                  <td className="px-4 py-3 text-sm text-dark-400">
+                    {s.year === 2 ? 'Second Year' : s.year === 3 ? 'Third Year' : s.year || '—'}
+                  </td>
                   <td className="px-4 py-3 text-sm text-dark-400">{s.section || '—'}</td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
@@ -151,21 +156,54 @@ export default function Students() {
               <button onClick={() => setShowModal(false)} className="text-dark-400 hover:text-white"><HiOutlineX className="w-5 h-5" /></button>
             </div>
             <form onSubmit={handleSave} className="space-y-3">
-              {[
-                { key: 'name', label: 'Name', required: true },
-                { key: 'register_number', label: 'Register Number', required: !editingStudent, disabled: !!editingStudent },
-                { key: 'email', label: 'Email', type: 'email', required: !editingStudent },
-                { key: 'department', label: 'Department' },
-                { key: 'year', label: 'Year', type: 'number' },
-                { key: 'section', label: 'Section' },
-                { key: 'password', label: editingStudent ? 'New Password (leave blank to keep)' : 'Password', type: 'password', required: !editingStudent },
-              ].map(({ key, label, type = 'text', required, disabled }) => (
-                <div key={key}>
-                  <label className="block text-xs font-medium text-dark-400 mb-1">{label}</label>
-                  <input type={type} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} required={required} disabled={disabled}
-                    className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500 disabled:opacity-50" />
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1">Name</label>
+                <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
+                  className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1">Register Number</label>
+                <input type="text" value={form.register_number} onChange={(e) => setForm({ ...form, register_number: e.target.value })} required disabled={!!editingStudent}
+                  className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500 disabled:opacity-50" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1">Email</label>
+                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required
+                  className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-dark-400 mb-1">Year</label>
+                  <select value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} required
+                    className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500 cursor-pointer">
+                    <option value="">Select Year</option>
+                    <option value="2">Second Year</option>
+                    <option value="3">Third Year</option>
+                  </select>
                 </div>
-              ))}
+                <div>
+                  <label className="block text-xs font-medium text-dark-400 mb-1">Section</label>
+                  <select value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} required
+                    className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500 cursor-pointer">
+                    <option value="">Select Section</option>
+                    <option value="A">Section A</option>
+                    <option value="B">Section B</option>
+                    <option value="C">Section C</option>
+                    <option value="D">Section D</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1">Department</label>
+                <input type="text" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}
+                  placeholder="e.g. AI & DS"
+                  className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1">{editingStudent ? 'New Password (leave blank to keep)' : 'Password'}</label>
+                <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingStudent}
+                  className="w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500" />
+              </div>
               <div className="flex justify-end gap-2 pt-3">
                 <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-dark-400 hover:text-white transition-colors">Cancel</button>
                 <button type="submit" disabled={submitting} className="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">

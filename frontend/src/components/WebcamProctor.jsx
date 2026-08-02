@@ -174,10 +174,10 @@ export default function WebcamProctor({
         const g = data[idx + 1];
         const b = data[idx + 2];
 
-        // Skin color detection rule in RGB space
-        const isSkin = r > 80 && g > 35 && b > 20 &&
-                       (Math.max(r, g, b) - Math.min(r, g, b) > 15) &&
-                       Math.abs(r - g) > 12 && r > g && r > b;
+        // Skin color detection rule in RGB space (lenient to support low light & varied skin tones)
+        const isSkin = r > 50 && g > 20 && b > 10 &&
+                       (Math.max(r, g, b) - Math.min(r, g, b) > 10) &&
+                       Math.abs(r - g) > 8 && r > g && r > b;
 
         if (isSkin) {
           totalSkin++;
@@ -191,9 +191,9 @@ export default function WebcamProctor({
       }
     }
 
-    // 1. Check Face Presence
+    // 1. Check Face Presence (reduced skinRatio threshold to 0.01 for robust presence check)
     const skinRatio = totalSkin / (width * height);
-    if (skinRatio < 0.04) {
+    if (skinRatio < 0.01) {
       noFaceCounterRef.current++;
       turnCounterRef.current = 0;
       multiCounterRef.current = 0;

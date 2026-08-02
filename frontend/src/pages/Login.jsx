@@ -87,32 +87,57 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
+    <div className="min-h-screen aurora-bg grid-overlay flex items-center justify-center p-4 sm:p-6">
       {/* Background Glows */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-brand-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl" />
+        <div className="absolute -top-28 -right-24 w-80 h-80 bg-brand-500/20 rounded-full blur-3xl animate-float-slow" />
+        <div className="absolute -bottom-32 -left-24 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-float-slow" />
       </div>
 
-      <div className="w-full max-w-lg relative animate-fade-in my-6">
+      <div className="w-full max-w-5xl relative animate-fade-in my-6 grid lg:grid-cols-[1fr_1.1fr] gap-6 items-center">
+        <div className="hidden lg:block">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-brand-500/20 bg-brand-500/10 text-brand-300 text-xs font-semibold mb-5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Secure Assessment Platform
+          </div>
+          <h2 className="text-5xl font-black tracking-tight text-white leading-tight">
+            Code exams with confidence, clarity, and control.
+          </h2>
+          <p className="mt-5 text-dark-300 text-base leading-7 max-w-lg">
+            A focused portal for AI & DS assessments with clean registration, proctored rules, and administrator analytics in one place.
+          </p>
+          <div className="mt-8 grid grid-cols-3 gap-3 max-w-lg">
+            {[
+              ['Live', 'Sessions'],
+              ['Smart', 'Proctoring'],
+              ['Fast', 'Reports'],
+            ].map(([title, label]) => (
+              <div key={label} className="glass-card rounded-2xl p-4">
+                <p className="text-xl font-bold text-white">{title}</p>
+                <p className="text-xs text-dark-400 mt-1">{label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
         {/* Header */}
         <div className="text-center mb-6">
           <div className="inline-flex items-center gap-3 mb-2">
-            <div className="w-12 h-12 bg-brand-500/10 border border-brand-500/20 rounded-xl flex items-center justify-center">
-              <HiOutlineCode className="w-7 h-7 text-brand-400" />
+            <div className="w-12 h-12 bg-gradient-to-br from-brand-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg shadow-brand-500/25">
+              <HiOutlineCode className="w-7 h-7 text-white" />
             </div>
             <div className="text-left">
-              <h1 className="text-2xl font-bold text-white tracking-tight">CodeArena</h1>
+              <h1 className="text-2xl font-black text-white tracking-tight">CodeArena</h1>
               <p className="text-xs text-brand-400 font-semibold tracking-wide uppercase">AI & DS Assessment Portal</p>
             </div>
           </div>
         </div>
 
         {/* Card */}
-        <div className="bg-dark-900 border border-dark-700/60 rounded-2xl p-7 shadow-2xl backdrop-blur-xl">
+        <div className="glass-card rounded-3xl p-6 sm:p-8">
           <div className="flex items-center justify-between mb-6 pb-3 border-b border-dark-700/60">
             <div>
-              <h2 className="text-lg font-bold text-white">
+              <h2 className="text-xl font-bold text-white">
                 {isAdminMode ? 'Admin Portal Access' : 'Student Assessment Registration'}
               </h2>
               <p className="text-xs text-dark-400">
@@ -125,7 +150,7 @@ export default function Login() {
                 setIsAdminMode(!isAdminMode);
                 setError('');
               }}
-              className="text-xs font-medium text-brand-400 hover:text-brand-300 underline underline-offset-4 transition-colors"
+              className="rounded-full border border-brand-500/20 bg-brand-500/10 px-3 py-1.5 text-xs font-semibold text-brand-300 hover:bg-brand-500/20 transition-colors"
             >
               {isAdminMode ? 'Student Form' : 'Admin Login'}
             </button>
@@ -154,7 +179,7 @@ export default function Login() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. John Doe"
-                    className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
+                    className="w-full pl-10 pr-4 py-3 bg-dark-800/80 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all"
                   />
                 </div>
               </div>
@@ -172,7 +197,7 @@ export default function Login() {
                     value={regNo}
                     onChange={(e) => setRegNo(e.target.value)}
                     placeholder="e.g. 211421243001 or STU001"
-                    className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
+                    className="w-full pl-10 pr-4 py-3 bg-dark-800/80 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all"
                   />
                 </div>
               </div>
@@ -188,7 +213,7 @@ export default function Login() {
                     type="text"
                     disabled
                     value="AI & DS (Artificial Intelligence & Data Science)"
-                    className="w-full pl-10 pr-4 py-2.5 bg-dark-800/60 border border-brand-500/30 text-brand-300 font-semibold rounded-xl text-sm cursor-not-allowed"
+                    className="w-full pl-10 pr-4 py-3 bg-brand-500/10 border border-brand-500/30 text-brand-300 font-semibold rounded-xl text-sm cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -205,7 +230,7 @@ export default function Login() {
                     <select
                       value={section}
                       onChange={(e) => setSection(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600/60 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
+                      className="w-full pl-10 pr-4 py-3 bg-dark-800/80 border border-dark-600/60 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all"
                     >
                       <option value="A">Section A</option>
                       <option value="B">Section B</option>
@@ -225,7 +250,7 @@ export default function Login() {
                     <select
                       value={year}
                       onChange={(e) => setYear(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600/60 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
+                      className="w-full pl-10 pr-4 py-3 bg-dark-800/80 border border-dark-600/60 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all"
                     >
                       <option value="1st Year">1st Year</option>
                       <option value="2nd Year">2nd Year</option>
@@ -240,7 +265,7 @@ export default function Login() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-3 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-brand-500/20 flex items-center justify-center gap-2"
+                className="w-full mt-2 py-3.5 btn-primary disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -267,7 +292,7 @@ export default function Login() {
                     value={adminEmail}
                     onChange={(e) => setAdminEmail(e.target.value)}
                     placeholder="admin@codearena.com"
-                    className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 transition-all"
+                    className="w-full pl-10 pr-4 py-3 bg-dark-800/80 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all"
                   />
                 </div>
               </div>
@@ -283,8 +308,8 @@ export default function Login() {
                     required
                     value={adminPassword}
                     onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 transition-all"
+                    placeholder="Password"
+                    className="w-full pl-10 pr-4 py-3 bg-dark-800/80 border border-dark-600/60 rounded-xl text-white placeholder-dark-500 text-sm focus:outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all"
                   />
                 </div>
               </div>
@@ -292,7 +317,7 @@ export default function Login() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-3 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-all"
+                className="w-full mt-2 py-3.5 btn-primary text-white font-bold rounded-xl text-sm transition-all"
               >
                 {loading ? 'Authenticating...' : 'Sign in as Admin'}
               </button>
@@ -303,6 +328,7 @@ export default function Login() {
         <p className="text-center text-dark-500 text-xs mt-4">
           CodeArena &bull; AI & DS Department &copy; {new Date().getFullYear()}
         </p>
+        </div>
       </div>
     </div>
   );

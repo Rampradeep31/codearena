@@ -40,11 +40,13 @@ export default function ExamInterface() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
 
   // Refs
   const autoSaveTimer = useRef(null);
   const lastSavedCode = useRef('');
   const violationDebounce = useRef(0);
+  const violationCounts = useRef({ face_turned: 0, multiple_faces: 0 });
 
   // ─── Load Data ─────────────────────────────────
   useEffect(() => {
@@ -155,15 +157,27 @@ export default function ExamInterface() {
   // ─── Violation Monitoring ─────────────────────
   useEffect(() => {
     const handleVisibility = () => {
-      if (Date.now() - mountTime.current < 5000) return;
+      console.log("Visibility change detected. hidden:", document.hidden);
+      if (Date.now() - mountTime.current < 5000) {
+        console.log("Visibility check skipped: within 5s grace period.");
+        return;
+      }
       if (document.hidden) recordViolation('tab_hidden');
     };
     const handleBlur = () => {
-      if (Date.now() - mountTime.current < 5000) return;
+      console.log("Window blur detected.");
+      if (Date.now() - mountTime.current < 5000) {
+        console.log("Blur check skipped: within 5s grace period.");
+        return;
+      }
       recordViolation('window_blur');
     };
     const handleFullscreenChange = () => {
-      if (document.fullscreenElement) {
+      const currentlyFullscreen = !!document.fullscreenElement;
+      console.log("Fullscreen change detected. Currently fullscreen:", currentlyFullscreen);
+      setIsFullscreen(currentlyFullscreen);
+      
+      if (currentlyFullscreen) {
         hasEnteredFullscreen.current = true;
       } else if (hasEnteredFullscreen.current && Date.now() - mountTime.current > 5000) {
         recordViolation('fullscreen_exit');
@@ -174,12 +188,15 @@ export default function ExamInterface() {
     window.addEventListener('blur', handleBlur);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
+    // Initial check (in case browser allowed fullscreen before useEffect)
+    setIsFullscreen(!!document.fullscreenElement);
+
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [violationCount]);
+  }, [violationCount, attempt]);
 
   // ─── Online/Offline ───────────────────────────
   useEffect(() => {
@@ -192,40 +209,70 @@ export default function ExamInterface() {
 
   const recordViolation = async (type) => {
     const now = Date.now();
-    if (now - violationDebounce.current < 2000) return; // Dedup 2s
+    if (now - violationDebounce.current < 2000) {
+      console.log("Violation recording debounced.");
+      return;
+    }
     violationDebounce.current = now;
 
+    if (type === 'face_turned') {
+      violationCounts.current.face_turned += 1;
+    } else if (type === 'multiple_faces') {
+      violationCounts.current.multiple_faces += 1;
+    }
+
+    console.log("Recording violation:", type);
     try {
       const res = await studentAPI.recordViolation(attemptId, { violation_type: type });
       const data = res.data || {};
-      // Server is the source of truth for the count
+      console.log("Violation response data:", data);
       const newCount = typeof data.violation_count === 'number' ? data.violation_count : violationCount + 1;
       setViolationCount(newCount);
 
-      if (data.auto_submitted || newCount >= (data.max_violations || attempt?.max_violations || 3)) {
+      const maxLimit = data.max_violations || attempt?.max_violations || 3;
+      const faceTurnLimitReached = type === 'face_turned' && violationCounts.current.face_turned >= 2;
+
+      if (data.auto_submitted || newCount >= maxLimit || faceTurnLimitReached) {
         setWarningMsg('Maximum violations reached. Your test has been auto-submitted.');
+        try {
+          await studentAPI.finishTest(attemptId, 'auto_submitted');
+        } catch (e) {
+          console.error("Auto-submission failed:", e);
+        }
         setTimeout(() => navigate(`/student/exam/${attemptId}/complete`, { replace: true }), 2000);
       } else if (newCount === 1) {
         setWarningMsg('Warning 1: You left the examination screen. This activity has been recorded.');
       } else if (newCount === 2) {
         setWarningMsg('Warning 2: Another violation may result in automatic submission.');
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error("Violation recording failed:", err);
+    }
   };
 
   const handleFaceTurn = () => {
-    setWarningMsg('Warning: Head turned away! Please face forward and look at your screen.');
-    toast.error('Camera Warning: Please face forward!', { id: 'cam-warn-turn', duration: 4000 });
+    // Only warn inside the webcam proctoring widget
   };
 
   const handleMultipleFaces = () => {
-    setWarningMsg('Warning: Multiple persons detected in camera view! Ensure only you are in frame.');
-    toast.error('Camera Warning: Multiple persons detected!', { id: 'cam-warn-multi', duration: 4000 });
+    // Only warn inside the webcam proctoring widget
   };
 
   const requestFullscreen = () => {
-    try { document.documentElement.requestFullscreen?.(); }
-    catch { /* ignore */ }
+    try {
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        docEl.requestFullscreen();
+      } else if (docEl.mozRequestFullScreen) { /* Firefox */
+        docEl.mozRequestFullScreen();
+      } else if (docEl.webkitRequestFullscreen) { /* Chrome, Safari and Opera */
+        docEl.webkitRequestFullscreen();
+      } else if (docEl.msRequestFullscreen) { /* IE/Edge */
+        docEl.msRequestFullscreen();
+      }
+    } catch (err) {
+      console.warn("Fullscreen request failed:", err);
+    }
   };
 
   // ─── Navigation ───────────────────────────────
@@ -296,7 +343,7 @@ export default function ExamInterface() {
   };
 
   const handleAutoSubmit = async (reason) => {
-    try { await studentAPI.finishTest(attemptId); }
+    try { await studentAPI.finishTest(attemptId, 'auto_submitted'); }
     catch { /* already submitted */ }
     navigate(`/student/exam/${attemptId}/complete`, { replace: true });
   };
@@ -354,6 +401,26 @@ export default function ExamInterface() {
 
   return (
     <div className="h-screen bg-dark-950 flex flex-col no-select">
+      {!isFullscreen && (
+        <div className="fixed inset-0 bg-dark-950/95 flex items-center justify-center p-4 z-[9999] animate-fade-in no-select backdrop-blur-md">
+          <div className="bg-dark-900 border border-dark-700/50 rounded-2xl p-8 max-w-md w-full text-center shadow-2xl">
+            <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/20">
+              <HiOutlineShieldExclamation className="w-9 h-9 text-red-500 animate-pulse" />
+            </div>
+            <h1 className="text-xl font-bold text-white mb-2">Fullscreen Mode Required</h1>
+            <p className="text-sm text-dark-400 mb-6 leading-relaxed">
+              This examination is proctored. To start or continue writing, you must enter Fullscreen mode. Exiting fullscreen mode or switching tabs will trigger a proctoring violation.
+            </p>
+            <button
+              type="button"
+              onClick={requestFullscreen}
+              className="w-full py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-brand-500/20 cursor-pointer"
+            >
+              Enter Fullscreen Mode
+            </button>
+          </div>
+        </div>
+      )}
       {/* Warning Banner */}
       {warningMsg && (
         <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between">

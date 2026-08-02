@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { adminAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 import { HiOutlinePlus, HiOutlineTrash, HiOutlineArrowLeft } from 'react-icons/hi';
@@ -9,18 +9,32 @@ const topics = ['Arrays', 'Strings', 'Hashing', 'Two Pointers', 'Sliding Window'
 export default function QuestionEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const bankIdFromUrl = searchParams.get('bank_id');
   const isEdit = !!id;
 
   const [form, setForm] = useState({
     title: '', statement: '', difficulty: 'easy', marks: 10, topic: 'Arrays',
     input_format: '', output_format: '', constraints: '', sample_input: '', sample_output: '', explanation: '',
+    question_bank_id: bankIdFromUrl ? parseInt(bankIdFromUrl) : '',
   });
+  const [banks, setBanks] = useState([]);
   const [testCases, setTestCases] = useState([{ input: '', expected_output: '', is_hidden: false }]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    loadBanks();
     if (isEdit) loadQuestion();
   }, [id]);
+
+  const loadBanks = async () => {
+    try {
+      const res = await adminAPI.getQuestionBanks();
+      setBanks(res.data || []);
+    } catch (e) {
+      console.error('Error loading question banks:', e);
+    }
+  };
 
   const loadQuestion = async () => {
     try {
@@ -31,6 +45,7 @@ export default function QuestionEditor() {
         input_format: q.input_format || '', output_format: q.output_format || '',
         constraints: q.constraints || '', sample_input: q.sample_input || '',
         sample_output: q.sample_output || '', explanation: q.explanation || '',
+        question_bank_id: q.question_bank_id || '',
       });
       if (q.test_cases?.length) setTestCases(q.test_cases);
     } catch { toast.error('Error loading question'); }
@@ -61,7 +76,11 @@ export default function QuestionEditor() {
         await adminAPI.createQuestion({ ...form, test_cases: testCases });
         toast.success('Question created');
       }
-      navigate('/admin/questions');
+      if (form.question_bank_id) {
+        navigate(`/admin/questions?view_bank=${form.question_bank_id}`);
+      } else {
+        navigate('/admin/questions');
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error saving question');
     } finally { setSaving(false); }
@@ -82,7 +101,7 @@ export default function QuestionEditor() {
   return (
     <div className="space-y-6 animate-fade-in max-w-4xl">
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/admin/questions')} className="p-2 text-dark-400 hover:text-white transition-colors"><HiOutlineArrowLeft className="w-5 h-5" /></button>
+        <button onClick={() => navigate(form.question_bank_id ? `/admin/questions?view_bank=${form.question_bank_id}` : '/admin/questions')} className="p-2 text-dark-400 hover:text-white transition-colors"><HiOutlineArrowLeft className="w-5 h-5" /></button>
         <div>
           <h1 className="text-2xl font-bold text-white">{isEdit ? 'Edit Question' : 'New Question'}</h1>
           <p className="text-dark-400 text-sm mt-0.5">Fill in the question details and test cases</p>
@@ -101,7 +120,18 @@ export default function QuestionEditor() {
             <label className={labelClass}>Problem Statement</label>
             <textarea value={form.statement} onChange={(e) => setField('statement', e.target.value)} required rows={6} className={inputClass + ' resize-y'} placeholder="Describe the problem..." />
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className={labelClass}>Question Bank</label>
+              <select value={form.question_bank_id} onChange={(e) => setField('question_bank_id', e.target.value ? parseInt(e.target.value) : '')} className={inputClass}>
+                <option value="">No Question Bank</option>
+                {banks.map(b => (
+                  <option key={b.id} value={b.id}>
+                    [{b.year}] {b.title}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className={labelClass}>Difficulty</label>
               <select value={form.difficulty} onChange={(e) => setField('difficulty', e.target.value)} className={inputClass}>

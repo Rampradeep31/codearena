@@ -18,6 +18,74 @@ LANGUAGE_MAP = {
 _execution_semaphore = asyncio.Semaphore(settings.JUDGE0_MAX_CONCURRENT)
 
 
+import sys
+
+async def execute_code_locally(source_code: str, language: str, stdin: str = "") -> dict:
+    if language != "python":
+        return {
+            "status": "error",
+            "error": f"Local execution is only supported for Python in development. Configure Judge0 for other languages.",
+            "output": "",
+            "execution_time": 0,
+            "memory_used": 0,
+        }
+    
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            source_code,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(input=stdin.encode() if stdin else b""),
+                timeout=5.0
+            )
+            stdout = stdout_bytes.decode(errors='replace').strip()
+            stderr = stderr_bytes.decode(errors='replace').strip()
+            
+            if process.returncode != 0:
+                return {
+                    "status": "runtime_error",
+                    "error": stderr or f"Process exited with code {process.returncode}",
+                    "output": stdout,
+                    "execution_time": 0.05,
+                    "memory_used": 0,
+                }
+            else:
+                return {
+                    "status": "accepted",
+                    "status_description": "Accepted",
+                    "output": stdout,
+                    "error": "",
+                    "execution_time": 0.05,
+                    "memory_used": 0,
+                }
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            return {
+                "status": "time_limit_exceeded",
+                "error": "Execution timed out",
+                "output": "",
+                "execution_time": 5.0,
+                "memory_used": 0,
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"Failed to run subprocess: {str(e)}",
+            "output": "",
+            "execution_time": 0,
+            "memory_used": 0,
+        }
+
 async def execute_code(
     source_code: str,
     language: str,
@@ -25,6 +93,11 @@ async def execute_code(
     expected_output: Optional[str] = None,
 ) -> dict:
     """Execute code via Judge0 API. Returns execution result dict."""
+    # Local execution fallback for Python when Judge0 key is not set
+    if not settings.JUDGE0_API_KEY or settings.JUDGE0_API_KEY in ("your-rapidapi-key", "your-judge0-api-key", ""):
+        if language == "python":
+            return await execute_code_locally(source_code, language, stdin)
+
     language_id = LANGUAGE_MAP.get(language)
     if not language_id:
         return {
