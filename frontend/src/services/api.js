@@ -15,7 +15,7 @@ backendApi.interceptors.request.use((config) => {
 });
 
 // LocalStorage helpers for metadata
-const getLocalTestMetadata = () => {
+const getStudentLocalTestMetadata = () => {
   try {
     return JSON.parse(localStorage.getItem('test_metadata') || '{}');
   } catch (e) { return {}; }
@@ -218,7 +218,7 @@ export const studentAPI = {
       if (!test) throw new Error('Test not found');
 
       // Merge local test metadata
-      const meta = getLocalTestMetadata()[test.id] || { year: 'Second Year', question_bank_id: test.question_bank_id || null, randomize_questions: !!test.randomize_questions };
+      const meta = getStudentLocalTestMetadata()[test.id] || { year: 'Second Year', question_bank_id: test.question_bank_id || null, randomize_questions: !!test.randomize_questions };
       const qBankId = meta.question_bank_id;
       const randomize = meta.randomize_questions;
       const questionsPerStudent = test.questions_per_student || 5;
