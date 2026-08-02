@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     CODE_TIMEOUT_SECONDS: int = 10
     CODE_MEMORY_LIMIT_KB: int = 262144  # 256MB (sent to Judge0 as bytes)
 
+    # Gemini API Key for execution
+    GEMINI_API_KEY: str = ""
+
     # App Config
     MAX_VIOLATIONS_DEFAULT: int = 3
     MAX_FACE_TURN_VIOLATIONS: int = 2

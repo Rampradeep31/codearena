@@ -2,18 +2,24 @@ import { supabase } from './supabaseClient';
 import axios from 'axios';
 
 const backendApi = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.PROD ? 'https://codearena-api-e6ih.onrender.com' : '/api',
   headers: { 'Content-Type': 'application/json' },
   timeout: 30000,
 });
 
+// Add auth token to requests
 backendApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  const token = localStorage.getItem('codearena_token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
+// LocalStorage helpers for metadata
+const getLocalTestMetadata = () => {
+  try {
+    return JSON.parse(localStorage.getItem('test_metadata') || '{}');
+  } catch (e) { return {}; }
+};
 
 /**
  * Supabase Cloud Backend Service for CodeArena
@@ -503,7 +509,6 @@ export const studentAPI = {
   }
 };
 
-// ─── Code Execution & Submissions API ─────────────────────────
 export const codeAPI = {
   run: async (data) => {
     try {
