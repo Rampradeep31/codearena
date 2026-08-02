@@ -9,7 +9,7 @@ const backendApi = axios.create({
 
 // Add auth token to requests
 backendApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('codearena_token');
+  const token = localStorage.getItem('token') || localStorage.getItem('codearena_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
