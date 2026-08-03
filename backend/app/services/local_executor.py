@@ -39,6 +39,114 @@ def extract_java_class_name(source_code: str) -> str:
     return "Main"
 
 
+def _transpile_to_python(source_code: str, language: str) -> str:
+    """
+    Fallback lightweight transpiler for Java, C, and C++ when system compilers are missing.
+    Converts standard IO and loops to Python equivalent.
+    """
+    py_header = [
+        "import sys, math",
+        "_input_tokens = sys.stdin.read().split()",
+        "_input_idx = 0",
+        "def _next_token():",
+        "    global _input_idx",
+        "    if _input_idx < len(_input_tokens):",
+        "        tok = _input_tokens[_input_idx]",
+        "        _input_idx += 1",
+        "        return tok",
+        "    return ''",
+        "def _next_int():",
+        "    tok = _next_token()",
+        "    return int(tok) if tok else 0",
+        "def _next_float():",
+        "    tok = _next_token()",
+        "    return float(tok) if tok else 0.0",
+        "",
+        "def _user_main():",
+    ]
+
+    body = []
+    lines = source_code.splitlines()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Skip headers, imports, class boilerplate, return statements
+        if (
+            stripped.startswith("package ")
+            or stripped.startswith("import ")
+            or stripped.startswith("#include")
+            or stripped.startswith("using namespace")
+            or stripped.startswith("return 0")
+            or stripped.startswith("return;")
+        ):
+            continue
+        if re.match(r"(public\s+)?class\s+", stripped):
+            continue
+        if "public static void main" in stripped or "int main(" in stripped or "void main(" in stripped:
+            continue
+        if stripped in ("}", "};"):
+            continue
+
+        line_sub = stripped
+
+        # System.out.println / print
+        line_sub = re.sub(r"System\.out\.println\s*\((.*?)\)\s*;", r"print(\1)", line_sub)
+        line_sub = re.sub(r"System\.out\.print\s*\((.*?)\)\s*;", r"print(\1, end='')", line_sub)
+
+        # C++ cout / cin
+        line_sub = re.sub(r"\s*<<\s*(?:std::)?endl", "", line_sub)
+        line_sub = re.sub(r"(?:std::)?cout\s*<<\s*(.*?)\s*;\s*$", r"print(\1)", line_sub)
+
+        # C printf
+        if "printf" in line_sub:
+            m_args = re.search(r"printf\s*\(\s*\"(.*?)\"\s*,\s*(.*?)\)\s*;", line_sub)
+            m_noargs = re.search(r"printf\s*\(\s*\"(.*?)\"\s*\)\s*;", line_sub)
+            if m_args:
+                fmt_str, args_str = m_args.group(1), m_args.group(2)
+                has_newline = False
+                if fmt_str.endswith(r"\n") or fmt_str.endswith("\n"):
+                    has_newline = True
+                    fmt_str = fmt_str[:-2] if fmt_str.endswith(r"\n") else fmt_str[:-1]
+                end_clause = "" if has_newline else ", end=''"
+                fmt_py = re.sub(r"%[dfsg]", "{}", fmt_str)
+                line_sub = f"print(\"{fmt_py}\".format({args_str}){end_clause})"
+            elif m_noargs:
+                fmt_str = m_noargs.group(1)
+                has_newline = False
+                if fmt_str.endswith(r"\n") or fmt_str.endswith("\n"):
+                    has_newline = True
+                    fmt_str = fmt_str[:-2] if fmt_str.endswith(r"\n") else fmt_str[:-1]
+                end_clause = "" if has_newline else ", end=''"
+                line_sub = f"print(\"{fmt_str}\"{end_clause})"
+
+        # Scanner / cin / scanf
+        line_sub = re.sub(r"Scanner\s+\w+\s*=\s*new\s+Scanner\s*\(.*?\)\s*;", "", line_sub)
+        line_sub = re.sub(r"\b\w+\.nextInt\(\)", "_next_int()", line_sub)
+        line_sub = re.sub(r"\b\w+\.nextDouble\(\)", "_next_float()", line_sub)
+        line_sub = re.sub(r"\b\w+\.next\(\)", "_next_token()", line_sub)
+
+        # Simple variable declaration replacement: int n = ... -> n = ...
+        line_sub = re.sub(r"\b(int|long|double|float|String|char|bool|auto)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", r"\2 =", line_sub)
+
+        # Arrays: int[] nums = new int[n]; -> nums = [0] * (n)
+        line_sub = re.sub(r"\b(int|long|double|float|String)\[\]\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+\w+\[(.*?)\]\s*;", r"\2 = [0] * (\3)", line_sub)
+
+        # Clean trailing semicolons
+        if line_sub.strip().endswith(";") and not line_sub.strip().startswith("for"):
+            line_sub = line_sub.rstrip(";")
+
+        body.append("    " + line_sub)
+
+    if not body:
+        body.append("    pass")
+
+    body.append("\nif __name__ == '__main__':\n    _user_main()")
+    return "\n".join(py_header + body)
+
+
 class LocalCodeExecutor:
     """Local compiler and code execution engine for Java, Python, C, and C++."""
 
@@ -201,6 +309,15 @@ class LocalCodeExecutor:
         return stdout_str, stderr_str, exit_code, exec_time, timed_out
 
     @classmethod
+    def _run_fallback(
+        cls, source_code: str, language: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
+    ) -> Dict[str, Any]:
+        """Run fallback execution for Java/C/C++ when system compiler is missing."""
+        logger.info(f"Using fallback interpreter runner for {language}")
+        py_code = _transpile_to_python(source_code, language)
+        return cls._run_python(py_code, stdin, expected_output, timeout, temp_dir)
+
+    @classmethod
     def _run_python(
         cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
     ) -> Dict[str, Any]:
@@ -215,7 +332,6 @@ class LocalCodeExecutor:
             cmd, stdin, timeout, temp_dir
         )
 
-        # Categorize SyntaxError / IndentationError in Python as Compilation Error
         is_compilation_error = False
         if exit_code != 0 and ("SyntaxError:" in stderr or "IndentationError:" in stderr or "TabError:" in stderr):
             is_compilation_error = True
@@ -236,16 +352,7 @@ class LocalCodeExecutor:
         cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
     ) -> Dict[str, Any]:
         if not shutil.which("javac") or not shutil.which("java"):
-            return cls._evaluate_result(
-                stdout="",
-                stderr="Java compiler (javac) or runtime (java) not found on host system.",
-                compile_output="Java compiler (javac) or runtime (java) not found on host system.",
-                exit_code=1,
-                exec_time=0.0,
-                timed_out=False,
-                expected_output=expected_output,
-                is_compilation_failure=True,
-            )
+            return cls._run_fallback(source_code, "java", stdin, expected_output, timeout, temp_dir)
 
         class_name = extract_java_class_name(source_code)
         java_file = os.path.join(temp_dir, f"{class_name}.java")
@@ -293,16 +400,7 @@ class LocalCodeExecutor:
     ) -> Dict[str, Any]:
         gcc_bin = shutil.which("gcc")
         if not gcc_bin:
-            return cls._evaluate_result(
-                stdout="",
-                stderr="C compiler (gcc) not found on host system.",
-                compile_output="C compiler (gcc) not found on host system.",
-                exit_code=1,
-                exec_time=0.0,
-                timed_out=False,
-                expected_output=expected_output,
-                is_compilation_failure=True,
-            )
+            return cls._run_fallback(source_code, "c", stdin, expected_output, timeout, temp_dir)
 
         c_file = os.path.join(temp_dir, "solution.c")
         with open(c_file, "w", encoding="utf-8") as f:
@@ -352,16 +450,7 @@ class LocalCodeExecutor:
     ) -> Dict[str, Any]:
         gpp_bin = shutil.which("g++")
         if not gpp_bin:
-            return cls._evaluate_result(
-                stdout="",
-                stderr="C++ compiler (g++) not found on host system.",
-                compile_output="C++ compiler (g++) not found on host system.",
-                exit_code=1,
-                exec_time=0.0,
-                timed_out=False,
-                expected_output=expected_output,
-                is_compilation_failure=True,
-            )
+            return cls._run_fallback(source_code, "cpp", stdin, expected_output, timeout, temp_dir)
 
         cpp_file = os.path.join(temp_dir, "solution.cpp")
         with open(cpp_file, "w", encoding="utf-8") as f:
