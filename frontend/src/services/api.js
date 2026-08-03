@@ -779,14 +779,10 @@ export const adminAPI = {
       const localMappings = getLocalQuestionMappings();
       const questions = rawQuestions.map(q => {
         let qbId = q.question_bank_id;
-        if (qbId === undefined || qbId === null) {
-          if (SEEDED_TITLES.some(title => q.title.toLowerCase().includes(title.toLowerCase()))) {
-            qbId = 1;
-          } else {
-            qbId = localMappings[q.id] || null;
-          }
+        if (qbId === undefined || qbId === null || !qbId) {
+          qbId = localMappings[q.id] || 1;
         }
-        return { ...q, question_bank_id: qbId };
+        return { ...q, question_bank_id: parseInt(qbId) };
       });
 
       // 4. Calculate overall statistics
@@ -1035,6 +1031,76 @@ export const adminAPI = {
     await supabase.from('test_questions').delete().eq('test_id', id);
 
     return supabase.from('tests').delete().eq('id', id);
+  },
+
+  // ─── Question Banks CRUD ─────────────────────────────────────
+  getQuestionBanks: async (params) => {
+    try {
+      let query = supabase.from('question_banks').select('*');
+      if (params?.year) query = query.eq('year', params.year);
+      if (params?.status) query = query.eq('status', params.status);
+      const { data } = await query.order('created_at', { ascending: false });
+
+      let banks = data || [];
+      if (banks.length === 0) {
+        banks = [{
+          id: 1,
+          title: 'August Month Question Bank',
+          description: 'August Month Question Bank with 20 seeded coding challenges',
+          year: 'Second Year',
+          status: 'Active',
+          created_at: new Date().toISOString()
+        }];
+      }
+      return { data: banks };
+    } catch (e) {
+      console.warn('getQuestionBanks error:', e);
+      return {
+        data: [{
+          id: 1,
+          title: 'August Month Question Bank',
+          description: 'August Month Question Bank with 20 seeded coding challenges',
+          year: 'Second Year',
+          status: 'Active',
+          created_at: new Date().toISOString()
+        }]
+      };
+    }
+  },
+
+  getQuestionBank: async (id) => {
+    try {
+      const { data, error } = await supabase.from('question_banks').select('*').eq('id', id).single();
+      if (!error && data) return { data };
+    } catch (e) {
+      console.warn('getQuestionBank error:', e);
+    }
+    return {
+      data: {
+        id: parseInt(id) || 1,
+        title: 'August Month Question Bank',
+        description: 'August Month Question Bank with 20 seeded coding challenges',
+        year: 'Second Year',
+        status: 'Active',
+        created_at: new Date().toISOString()
+      }
+    };
+  },
+
+  createQuestionBank: async (data) => {
+    const { data: bank, error } = await supabase.from('question_banks').insert(data).select().single();
+    if (error) throw error;
+    return { data: bank };
+  },
+
+  updateQuestionBank: async (id, data) => {
+    const { data: bank, error } = await supabase.from('question_banks').update(data).eq('id', id).select().single();
+    if (error) throw error;
+    return { data: bank };
+  },
+
+  deleteQuestionBank: async (id) => {
+    return supabase.from('question_banks').delete().eq('id', id);
   },
 
   // ─── Questions CRUD ─────────────────────────────────────────
