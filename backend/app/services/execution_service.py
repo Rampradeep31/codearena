@@ -71,7 +71,26 @@ async def run_against_test_cases(
             act_lines = [l.strip() for l in act.splitlines() if l.strip()]
             exp_lines = [l.strip() for l in exp.splitlines() if l.strip()]
             if act_lines == exp_lines: return True
-            if act.split() == exp.split(): return True
+            
+            act_tokens = act.split()
+            exp_tokens = exp.split()
+            if act_tokens == exp_tokens: return True
+            
+            if len(act_tokens) == len(exp_tokens):
+                match = True
+                for a, e in zip(act_tokens, exp_tokens):
+                    if a == e:
+                        continue
+                    try:
+                        if abs(float(a) - float(e)) > 1e-6:
+                            match = False
+                            break
+                    except ValueError:
+                        match = False
+                        break
+                if match:
+                    return True
+                    
             return False
 
         passed = (result.get("status") == "accepted") and compare_outputs(actual_output, expected)

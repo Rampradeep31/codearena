@@ -62,6 +62,13 @@ def _transpile_to_python(source_code: str, language: str) -> str:
         "    tok = _next_token()",
         "    return float(tok) if tok else 0.0",
         "",
+        "class StringBuilder:",
+        "    def __init__(self, s=''): self.s = [str(s)] if s else []",
+        "    def append(self, s): self.s.append(str(s)); return self",
+        "    def reverse(self): self.s = [''.join(self.s)[::-1]]; return self",
+        "    def toString(self): return ''.join(self.s)",
+        "    def __str__(self): return ''.join(self.s)",
+        "",
         "def _user_main():",
     ]
 
@@ -131,11 +138,14 @@ def _transpile_to_python(source_code: str, language: str) -> str:
         line_sub = re.sub(r"\b\w+\.nextDouble\(\)", "_next_float()", line_sub)
         line_sub = re.sub(r"\b\w+\.next\(\)", "_next_token()", line_sub)
 
+        # Remove 'new ' keyword for object instantiation
+        line_sub = re.sub(r"\bnew\s+", "", line_sub)
+
         # Simple variable declaration replacement: int n = ... -> n = ...
-        line_sub = re.sub(r"\b(int|long|double|float|String|char|bool|auto)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", r"\2 =", line_sub)
+        line_sub = re.sub(r"\b(int|long|double|float|String|char|bool|auto|StringBuilder)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", r"\2 =", line_sub)
 
         # Arrays: int[] nums = new int[n]; -> nums = [0] * (n)
-        line_sub = re.sub(r"\b(int|long|double|float|String)\[\]\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+\w+\[(.*?)\]\s*;", r"\2 = [0] * (\3)", line_sub)
+        line_sub = re.sub(r"\b(int|long|double|float|String)\[\]\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\w+\[(.*?)\]\s*;", r"\2 = [0] * (\3)", line_sub)
 
         # Clean trailing semicolons
         if line_sub.strip().endswith(";") and not line_sub.strip().startswith("for"):
