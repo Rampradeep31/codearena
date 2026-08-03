@@ -146,16 +146,12 @@ async def start_test(
     attempt = existing.scalar_one_or_none()
 
     if attempt:
-        # If attempt was submitted, reset it to in_progress so student can retake/continue
+        # A submitted attempt is final: it cannot be reopened or retaken.
         if attempt.status in (AttemptStatus.SUBMITTED, AttemptStatus.AUTO_SUBMITTED):
-            attempt.status = AttemptStatus.IN_PROGRESS
-            attempt.started_at = now
-            attempt.expires_at = now + timedelta(minutes=test.duration_minutes)
-            attempt.violation_count = 0
-            attempt.total_score = 0
-            attempt.submitted_at = None
-            await db.commit()
-            await db.refresh(attempt)
+            raise HTTPException(
+                status_code=400,
+                detail="Test has already been submitted and cannot be restarted",
+            )
         return await _attempt_out(db, attempt)
 
     # Get question pool grouped by difficulty
@@ -302,12 +298,11 @@ async def get_attempt_questions(
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    if attempt.status in ("submitted", "auto_submitted", AttemptStatus.SUBMITTED, AttemptStatus.AUTO_SUBMITTED):
-        attempt.status = AttemptStatus.IN_PROGRESS
-        attempt.submitted_at = None
-        attempt.violation_count = 0
-        await db.commit()
-        await db.refresh(attempt)
+    if attempt.status in (AttemptStatus.SUBMITTED, AttemptStatus.AUTO_SUBMITTED):
+        raise HTTPException(
+            status_code=400,
+            detail="Attempt has already been submitted and can no longer be viewed"
+        )
 
     now = datetime.now(timezone.utc)
     if now > ensure_aware(attempt.expires_at):
@@ -408,6 +403,16 @@ async def save_code(
     if now > ensure_aware(attempt.expires_at):
         raise HTTPException(status_code=400, detail="Attempt has expired")
 
+    # Verify the question is assigned to this attempt
+    assigned = await db.execute(
+        select(StudentQuestion).where(
+            StudentQuestion.attempt_id == attempt_id,
+            StudentQuestion.question_id == data.question_id,
+        )
+    )
+    if not assigned.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Question is not part of this attempt")
+
     # Update or create code entry
     code_result = await db.execute(
         select(StudentCode).where(
@@ -457,22 +462,33 @@ async def record_violation(
 
     now = datetime.now(timezone.utc)
 
-    # Deduplication: ignore if same type within 2 seconds
-    recent = await db.execute(
-        select(Violation).where(
+    # Deduplication: ignore if the same violation type was recorded within 2 seconds.
+    # The comparison is done in Python with normalized (aware) datetimes because
+    # SQLite returns naive timestamps, and comparing them directly against an
+    # aware datetime in SQL is unreliable.
+    recent_result = await db.execute(
+        select(Violation)
+        .where(
             Violation.attempt_id == attempt_id,
             Violation.violation_type == data.violation_type,
-            Violation.created_at > now - timedelta(seconds=2),
         )
+        .order_by(Violation.created_at.desc())
+        .limit(1)
     )
-    if recent.scalar_one_or_none():
+    recent = recent_result.scalar_one_or_none()
+    if recent and ensure_aware(recent.created_at) > now - timedelta(seconds=2):
         # Duplicate event, return existing state without incrementing
         test_result = await db.execute(select(Test).where(Test.id == attempt.test_id))
         test = test_result.scalar_one_or_none()
+        effective_max = (
+            settings.MAX_FACE_TURN_VIOLATIONS
+            if data.violation_type == "face_turned"
+            else (test.max_violations if test else settings.MAX_VIOLATIONS_DEFAULT)
+        )
         return ViolationRecorded(
-            id=0, attempt_id=attempt_id, violation_type=data.violation_type,
-            created_at=now, violation_count=attempt.violation_count,
-            max_violations=test.max_violations if test else 3,
+            id=recent.id, attempt_id=attempt_id, violation_type=data.violation_type,
+            created_at=ensure_aware(recent.created_at), violation_count=attempt.violation_count,
+            max_violations=effective_max,
             auto_submitted=False,
         )
 
@@ -494,6 +510,7 @@ async def record_violation(
     test = test_result.scalar_one_or_none()
 
     limit_reached = False
+    effective_max = test.max_violations if test else settings.MAX_VIOLATIONS_DEFAULT
     if data.violation_type == "face_turned":
         face_count_result = await db.execute(
             select(func.count(Violation.id)).where(
@@ -502,6 +519,7 @@ async def record_violation(
             )
         )
         limit_reached = (face_count_result.scalar() or 0) >= settings.MAX_FACE_TURN_VIOLATIONS
+        effective_max = settings.MAX_FACE_TURN_VIOLATIONS
     elif test:
         limit_reached = attempt.violation_count >= test.max_violations
 
@@ -517,7 +535,7 @@ async def record_violation(
         id=violation.id, attempt_id=violation.attempt_id,
         violation_type=violation.violation_type, created_at=violation.created_at,
         violation_count=attempt.violation_count,
-        max_violations=test.max_violations if test else 3,
+        max_violations=effective_max,
         auto_submitted=auto_submitted,
     )
 

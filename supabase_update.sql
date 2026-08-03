@@ -39,3 +39,32 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 8. Place all existing questions inside the August Month Question Bank
 UPDATE public.questions SET question_bank_id = 1;
+
+-- ========================================================
+-- SECURITY HARDENING (OPTIONAL - read carefully)
+-- ========================================================
+-- The anon key in the browser is public, so "Allow public access" policies
+-- on test_cases expose hidden test cases to any student who opens the browser
+-- devtools and queries Supabase directly.
+--
+-- IMPORTANT: The admin frontend (QuestionEditor) currently reads test_cases
+-- through the anon key. Run the section below ONLY after the admin flows are
+-- migrated to the FastAPI backend (which stores test cases in its own database
+-- and never ships hidden cases to students). Until then, keep the public
+-- policy on test_cases.
+
+-- Lock down test_cases: only a JWT with role=authenticated and custom claim
+-- x-codearena-role='admin' (issued by your own auth service) may read rows.
+-- ALTER TABLE public.test_cases ENABLE ROW LEVEL SECURITY;
+-- DROP POLICY IF EXISTS "Allow public access test_cases" ON public.test_cases;
+-- CREATE POLICY "Only admin JWTs can read test_cases" ON public.test_cases
+--   FOR SELECT USING (
+--     auth.jwt() ->> 'x-codearena-role' = 'admin'
+--   );
+
+-- Repeat the same pattern for the other exam tables if they should be
+-- admin-only (questions, tests, users, test_attempts, submissions).
+-- ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
+-- DROP POLICY IF EXISTS "Allow public access questions" ON public.questions;
+-- CREATE POLICY "Only admin JWTs can read questions" ON public.questions
+--   FOR SELECT USING (auth.jwt() ->> 'x-codearena-role' = 'admin');

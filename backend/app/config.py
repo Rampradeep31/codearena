@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     # Gemini API Key for execution
     GEMINI_API_KEY: str = ""
 
+    # Supabase (used to mirror attempts/test-cases created through the
+    # frontend's Supabase-backed flows). Leave empty to rely only on the
+    # local database.
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+
+    # Local code execution engine. WARNING: running untrusted code locally is
+    # only safe in isolated environments. A security filter blocks the most
+    # dangerous APIs, but for production prefer a sandboxed judge (e.g. Judge0).
+    ALLOW_LOCAL_EXECUTION: bool = True
+
     # App Config
     MAX_VIOLATIONS_DEFAULT: int = 3
     MAX_FACE_TURN_VIOLATIONS: int = 2

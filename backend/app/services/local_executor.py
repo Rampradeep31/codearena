@@ -18,6 +18,107 @@ if not logger.handlers:
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
+# Static security filter: blocks student code that attempts to reach outside
+# the sandbox. This is a defense-in-depth layer, NOT a substitute for a real
+# sandbox (containers / Judge0). Patterns are matched against a normalized
+# (lowercased, whitespace-stripped) copy of the source.
+BLOCKED_PATTERNS = [
+    r"\bimport\s+os\b",
+    r"\bfrom\s+os\b",
+    r"\bimport\s+subprocess\b",
+    r"\bfrom\s+subprocess\b",
+    r"\bimport\s+socket\b",
+    r"\bfrom\s+socket\b",
+    r"\bimport\s+shutil\b",
+    r"\bimport\s+pathlib\b",
+    r"\bimport\s+ctypes\b",
+    r"\bimport\s+importlib\b",
+    r"\bimport\s+pickle\b",
+    r"\bimport\s+multiprocessing\b",
+    r"\bimport\s+pty\b",
+    r"\bimport\s+threading\b",
+    r"\bimport\s+requests\b",
+    r"\bimport\s+urllib\b",
+    r"\bimport\s+http\b",
+    r"\bimport\s+ftplib\b",
+    r"\bimport\s+telnetlib\b",
+    r"\bimport\s+paramiko\b",
+    r"\bimport\s+site\b",
+    r"\bimport\s+runpy\b",
+    r"\bimport\s+code\b",
+    r"\bimport\s+tempfile\b",
+    r"\b__import__\b",
+    r"\beval\s*\(",
+    r"\bexec\s*\(",
+    r"\bcompile\s*\(",
+    r"\bopen\s*\(",
+    r"\bos\.system\b",
+    r"\bos\.popen\b",
+    r"\bos\.fork\b",
+    r"\bos\.exec",
+    r"\.__subclasses__\s*\(",
+    r"\.__globals__\b",
+    r"\.__builtins__\b",
+    r"\.__import__\b",
+    r"\bsubprocess\.",
+    r"\bctypes\.",
+    r"\bshutil\.",
+    r"\bpathlib\.",
+    r"\bglobals\s*\(",
+    r"\bsystem\s*\(",
+    r"\bpopen\s*\(",
+]
+
+# For C/C++: block process/network manipulation.
+BLOCKED_PATTERNS_C = [
+    r"\bsystem\s*\(",
+    r"\bpopen\s*\(",
+    r"\bexecl\s*\(",
+    r"\bexecv\s*\(",
+    r"\bfork\s*\(",
+    r"\bexecvp\s*\(",
+    r"\bsocket\s*\(",
+    r"\bunlink\s*\(",
+    r"\bremove\s*\(",
+    r"\brename\s*\(",
+    r"\bmkdir\s*\(",
+    r"\brmdir\s*\(",
+    r"\bchmod\s*\(",
+    r"\bchown\s*\(",
+    r"\bfopen\s*\(",
+    r"\bfreopen\s*\(",
+]
+
+
+def _scan_for_blocked_code(source_code: str, language: str) -> Optional[str]:
+    """Return a human-readable description if the source looks dangerous, else None."""
+    normalized = re.sub(r"\s+", " ", (source_code or "").lower())
+    patterns = BLOCKED_PATTERNS_C if language in ("c", "cpp") else BLOCKED_PATTERNS
+    for pat in patterns:
+        if re.search(pat, normalized):
+            return f"Code execution blocked: use of pattern '{pat}' is not allowed in this environment"
+    return None
+
+
+def _kill_process_tree(process: subprocess.Popen):
+    """Force-kill a process and its children on both POSIX and Windows."""
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            os.killpg(process.pid, 9)
+    except Exception:
+        pass
+    try:
+        process.kill()
+        process.wait()
+    except Exception:
+        pass
+
 
 def _find_python_cmd() -> str:
     """Detect available python interpreter command."""
@@ -125,16 +226,50 @@ class LocalCodeExecutor:
                 "memory_used": 0,
             }
 
+        from app.config import settings
+        if not getattr(settings, "ALLOW_LOCAL_EXECUTION", True):
+            return {
+                "status": "runtime_error",
+                "status_description": "Runtime Error",
+                "stdout": "",
+                "stderr": "Code execution is disabled on this server",
+                "compile_output": "",
+                "output": "",
+                "error": "Code execution is disabled on this server",
+                "exit_code": 1,
+                "execution_time": 0.0,
+                "memory_used": 0,
+            }
+
+        # Static security filter (defense-in-depth)
+        blocked_reason = _scan_for_blocked_code(source_code, norm_lang)
+        if blocked_reason:
+            logger.warning(f"Blocked code submission ({norm_lang}): {blocked_reason}")
+            return {
+                "status": "compilation_error",
+                "status_description": "Compilation Error",
+                "stdout": "",
+                "stderr": blocked_reason,
+                "compile_output": blocked_reason,
+                "output": "",
+                "error": blocked_reason,
+                "exit_code": 1,
+                "execution_time": 0.0,
+                "memory_used": 0,
+            }
+
+        memory_limit_kb = int(getattr(settings, "CODE_MEMORY_LIMIT_KB", 0) or 0)
+
         with tempfile.TemporaryDirectory(prefix="code_exec_") as temp_dir:
             try:
                 if norm_lang == "python":
-                    return cls._run_python(source_code, stdin, expected_output, timeout, temp_dir)
+                    return cls._run_python(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
                 elif norm_lang == "java":
-                    return cls._run_java(source_code, stdin, expected_output, timeout, temp_dir)
+                    return cls._run_java(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
                 elif norm_lang == "c":
-                    return cls._run_c(source_code, stdin, expected_output, timeout, temp_dir)
+                    return cls._run_c(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
                 elif norm_lang == "cpp":
-                    return cls._run_cpp(source_code, stdin, expected_output, timeout, temp_dir)
+                    return cls._run_cpp(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
             except Exception as e:
                 logger.error(f"Unexpected error during code execution: {str(e)}", exc_info=True)
                 return {
@@ -212,30 +347,40 @@ class LocalCodeExecutor:
         stdin_data: str,
         timeout: float,
         cwd: str,
+        memory_limit_kb: int = 0,
     ) -> tuple[str, str, int, float, bool]:
         """Execute a subprocess with stdin, stdout, stderr capture and timeout protection."""
         start_time = time.perf_counter()
+
+        popen_kwargs = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "cwd": cwd,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
+            if memory_limit_kb > 0:
+                def _limit_memory():
+                    import resource
+                    bytes_limit = int(memory_limit_kb) * 1024
+                    resource.setrlimit(resource.RLIMIT_AS, (bytes_limit, bytes_limit))
+                    resource.setrlimit(resource.RLIMIT_DATA, (bytes_limit, bytes_limit))
+                popen_kwargs["preexec_fn"] = _limit_memory
+
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=cwd,
-                encoding="utf-8",
-                errors="replace",
-            )
+            process = subprocess.Popen(cmd, **popen_kwargs)
             stdout, stderr = process.communicate(input=stdin_data, timeout=timeout)
             exec_time = time.perf_counter() - start_time
             return stdout, stderr, process.returncode, exec_time, False
         except subprocess.TimeoutExpired:
             exec_time = time.perf_counter() - start_time
-            try:
-                process.kill()
-                process.wait()
-            except Exception:
-                pass
+            _kill_process_tree(process)
             return "", "Time Limit Exceeded", 124, exec_time, True
         except Exception as e:
             exec_time = time.perf_counter() - start_time
@@ -243,17 +388,18 @@ class LocalCodeExecutor:
 
     @classmethod
     def _run_python(
-        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
+        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str,
+        memory_limit_kb: int = 0,
     ) -> Dict[str, Any]:
         py_file = os.path.join(temp_dir, "solution.py")
         with open(py_file, "w", encoding="utf-8") as f:
             f.write(source_code)
 
         python_cmd = _find_python_cmd()
-        cmd = [python_cmd, py_file]
+        cmd = [python_cmd, "-I", py_file]
 
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
-            cmd, stdin, timeout, temp_dir
+            cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
         is_compilation_error = False
@@ -273,7 +419,8 @@ class LocalCodeExecutor:
 
     @classmethod
     def _run_java(
-        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
+        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str,
+        memory_limit_kb: int = 0,
     ) -> Dict[str, Any]:
         javac_bin = _find_javac()
         java_bin = _find_java()
@@ -299,7 +446,7 @@ class LocalCodeExecutor:
         # Step 1: Compile
         compile_cmd = [javac_bin, f"{class_name}.java"]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
-            compile_cmd, "", timeout, temp_dir
+            compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
         if exit_code_c != 0 or timed_out_c:
@@ -317,7 +464,7 @@ class LocalCodeExecutor:
         # Step 2: Run
         run_cmd = [java_bin, "-cp", temp_dir, class_name]
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
-            run_cmd, stdin, timeout, temp_dir
+            run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
         return cls._evaluate_result(
@@ -333,7 +480,8 @@ class LocalCodeExecutor:
 
     @classmethod
     def _run_c(
-        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
+        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str,
+        memory_limit_kb: int = 0,
     ) -> Dict[str, Any]:
         gcc_bin = shutil.which("gcc")
         if not gcc_bin:
@@ -359,7 +507,7 @@ class LocalCodeExecutor:
         # Step 1: Compile
         compile_cmd = [gcc_bin, "solution.c", "-o", exe_filename, "-lm"]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
-            compile_cmd, "", timeout, temp_dir
+            compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
         if exit_code_c != 0 or timed_out_c:
@@ -377,7 +525,7 @@ class LocalCodeExecutor:
         # Step 2: Run
         run_cmd = [exe_path] if sys.platform == "win32" else [f"./{exe_filename}"]
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
-            run_cmd, stdin, timeout, temp_dir
+            run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
         return cls._evaluate_result(
@@ -393,7 +541,8 @@ class LocalCodeExecutor:
 
     @classmethod
     def _run_cpp(
-        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
+        cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str,
+        memory_limit_kb: int = 0,
     ) -> Dict[str, Any]:
         gpp_bin = shutil.which("g++")
         if not gpp_bin:
@@ -419,7 +568,7 @@ class LocalCodeExecutor:
         # Step 1: Compile
         compile_cmd = [gpp_bin, "solution.cpp", "-o", exe_filename, "-lm"]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
-            compile_cmd, "", timeout, temp_dir
+            compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
         if exit_code_c != 0 or timed_out_c:
@@ -437,7 +586,7 @@ class LocalCodeExecutor:
         # Step 2: Run
         run_cmd = [exe_path] if sys.platform == "win32" else [f"./{exe_filename}"]
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
-            run_cmd, stdin, timeout, temp_dir
+            run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
         return cls._evaluate_result(

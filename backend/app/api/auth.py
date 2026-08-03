@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
+import secrets
 from app.database.connection import get_db
 from app.models.user import User, UserRole, UserStatus
 from app.schemas.schemas import LoginRequest, LoginResponse, UserOut, StudentEntryRequest
@@ -58,6 +59,9 @@ async def student_entry(request: StudentEntryRequest, db: AsyncSession = Depends
     reg_no = request.register_number.strip().upper()
     email = f"{reg_no.lower()}@codearena.com"
 
+    if not request.name or not request.name.strip():
+        raise HTTPException(status_code=400, detail="Name is required")
+
     # Parse numeric year if string format like '1st Year'
     year_num = 1
     if request.year:
@@ -73,12 +77,15 @@ async def student_entry(request: StudentEntryRequest, db: AsyncSession = Depends
     user = result.scalar_one_or_none()
 
     if not user:
-        # Create new student in database
+        # Create new student. The password is a random secret because it is never
+        # shown to the student (they authenticate through student-entry). Using
+        # the register number as the default password would let anyone log in as
+        # any student via /auth/login.
         user = User(
             email=email,
             register_number=reg_no,
             name=request.name.strip(),
-            password_hash=hash_password(reg_no.lower()),
+            password_hash=hash_password(secrets.token_urlsafe(24)),
             role=UserRole.STUDENT,
             department=request.department or "AI & DS",
             year=year_num,

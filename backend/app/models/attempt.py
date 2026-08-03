@@ -104,9 +104,9 @@ class SubmissionResult(Base):
     submission_id: Mapped[int] = mapped_column(
         ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    test_case_id: Mapped[int] = mapped_column(
-        ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False
-    )
+    # Plain integer: test cases may come from the Supabase mirror or a sample
+    # fallback whose IDs do not exist in the local test_cases table.
+    test_case_id: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
     passed: Mapped[bool] = mapped_column(nullable=False, default=False)
     output: Mapped[str] = mapped_column(Text, nullable=True)
     execution_time: Mapped[float] = mapped_column(Float, nullable=True)

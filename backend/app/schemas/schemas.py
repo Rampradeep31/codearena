@@ -10,8 +10,8 @@ class LoginRequest(BaseModel):
 
 
 class StudentEntryRequest(BaseModel):
-    name: str
-    register_number: str
+    name: str = Field(..., min_length=1, max_length=255)
+    register_number: str = Field(..., min_length=1, max_length=50)
     department: Optional[str] = "AI & DS"
     section: Optional[str] = "A"
     year: Optional[str] = "1st Year"
@@ -321,7 +321,18 @@ class CodeSubmitResponse(BaseModel):
 
 # ─── Violation ────────────────────────────────────────
 class ViolationCreate(BaseModel):
-    violation_type: str  # tab_hidden, window_blur, fullscreen_exit, copy_attempt, paste_attempt, face_turned
+    violation_type: str  # tab_hidden, window_blur, fullscreen_exit, copy_attempt, paste_attempt, face_turned, multiple_faces
+
+    _ALLOWED_TYPES = {
+        "tab_hidden", "window_blur", "fullscreen_exit",
+        "copy_attempt", "paste_attempt", "face_turned", "multiple_faces",
+    }
+
+    @model_validator(mode="after")
+    def validate_violation_type(self):
+        if self.violation_type not in self._ALLOWED_TYPES:
+            raise ValueError(f"violation_type must be one of: {sorted(self._ALLOWED_TYPES)}")
+        return self
 
 
 class ViolationOut(BaseModel):

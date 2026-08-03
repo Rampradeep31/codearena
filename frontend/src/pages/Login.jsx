@@ -53,7 +53,7 @@ export default function Login() {
 
       const { role } = await loginStudentDirect(studentData);
       toast.success(`Welcome, ${name}!`);
-      navigate('/student/tests/1/instructions', { replace: true });
+      navigate('/student', { replace: true });
     } catch (err) {
       console.error(err);
       setError('Error entering assessment. Please check details.');

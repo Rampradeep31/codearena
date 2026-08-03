@@ -9,17 +9,10 @@ const backendApi = axios.create({
 
 // Add auth token to requests
 backendApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token') || localStorage.getItem('codearena_token');
+  const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
-
-// LocalStorage helpers for metadata
-const getStudentLocalTestMetadata = () => {
-  try {
-    return JSON.parse(localStorage.getItem('test_metadata') || '{}');
-  } catch (e) { return {}; }
-};
 
 /**
  * Supabase Cloud Backend Service for CodeArena
@@ -29,494 +22,64 @@ const getStudentLocalTestMetadata = () => {
 // ─── Auth API (Student Entry & Registration) ─────────────────
 export const authAPI = {
   login: async (email, password) => {
-    // Admin login
-    if (email === 'admin@codearena.com' && password === 'admin123') {
-      const adminUser = { id: 1, name: 'Admin', email: 'admin@codearena.com', role: 'admin' };
-      return { data: { access_token: 'admin_token', role: 'admin', user: adminUser } };
-    }
-
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .or(`email.eq.${email},register_number.eq.${email}`)
-      .single();
-
-    if (error || !data) {
-      throw new Error('Invalid credentials');
-    }
-
-    return { data: { access_token: 'sb_token_' + data.id, role: data.role || 'student', user: data } };
+    // Real authentication against the FastAPI backend. There is no
+    // hardcoded admin bypass anymore; all accounts authenticate the same way.
+    const res = await backendApi.post('/auth/login', { email, password });
+    return res;
   },
 
   studentEntry: async (studentData) => {
-    const regNo = studentData.register_number.trim().toUpperCase();
-
-    // Parse numeric year
-    let yearNum = 1;
-    if (studentData.year) {
-      const digits = String(studentData.year).replace(/\D/g, '');
-      yearNum = digits ? parseInt(digits) : 1;
-    }
-
-    const studentRecord = {
-      name: studentData.name.trim(),
-      register_number: regNo,
-      department: studentData.department || 'AI & DS',
-      section: studentData.section || 'A',
-      year: yearNum,
-      role: 'student'
-    };
-
-    // Upsert student (create if doesn't exist, update if exists)
-    const { data: user, error } = await supabase
-      .from('users')
-      .upsert(studentRecord, { onConflict: 'register_number' })
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Student login error:", error);
-      throw new Error("Failed to register student entry");
-    }
-
-    return {
-      data: {
-        access_token: 'sb_token_' + user.id,
-        role: 'student',
-        user: user
-      }
-    };
+    // Student direct entry: the backend creates the account (with a random,
+    // never-displayed password) or updates it, and returns a real JWT.
+    const res = await backendApi.post('/auth/student-entry', studentData);
+    return res;
   }
 };
 
 // ─── Student API (Tests & Attempts) ───────────────────────────
+// All student flows go through the FastAPI backend. The backend owns attempt
+// lifecycle, question assignment, violation limits and grading; nothing is
+// fabricated client-side anymore.
 export const studentAPI = {
   getTests: async () => {
-    try {
-      const { data: dbTests, error } = await supabase.from('tests').select('*');
-      if (!error && dbTests) {
-        let currentUser = null;
-        try {
-          const userStr = localStorage.getItem('user');
-          if (userStr) currentUser = JSON.parse(userStr);
-        } catch (e) {
-          console.error(e);
-        }
-
-        const active = [];
-        const completed = [];
-        const upcoming = [];
-
-        for (const t of dbTests) {
-          let testData = {
-            id: t.id,
-            name: t.name,
-            description: t.description,
-            duration_minutes: t.duration_minutes,
-            questions_per_student: t.questions_per_student,
-            total_marks: t.total_marks,
-            allowed_languages: t.allowed_languages,
-            max_violations: t.max_violations,
-            start_time: t.start_time,
-            end_time: t.end_time
-          };
-
-          if (currentUser) {
-            const { data: attempts } = await supabase
-              .from('test_attempts')
-              .select('*')
-              .eq('test_id', t.id)
-              .eq('user_id', currentUser.id)
-              .order('id', { ascending: false });
-
-            if (attempts && attempts.length > 0) {
-              const latestAttempt = attempts[0];
-              testData.attempt_id = latestAttempt.id;
-              testData.attempt_status = latestAttempt.status;
-              testData.attempt_submitted_at = latestAttempt.submitted_at;
-            }
-          }
-
-          const now = new Date();
-          const startTime = new Date(t.start_time);
-          const endTime = new Date(t.end_time);
-
-          if (testData.attempt_status === 'submitted' || testData.attempt_status === 'auto_submitted' || endTime < now) {
-            completed.push(testData);
-          } else if (startTime > now) {
-            upcoming.push(testData);
-          } else {
-            active.push(testData);
-          }
-        }
-
-        return { data: { active, upcoming, completed } };
-      }
-    } catch (e) {
-      console.warn('Supabase getTests error:', e);
-    }
-
-    // Active test fallback
-    return {
-      data: {
-        active: [{
-          id: 1,
-          name: "AI & DS Coding Assessment - Round 1",
-          description: "Official online assessment for AI & DS department. Complete 1 coding challenge within 60 minutes.",
-          duration_minutes: 60,
-          questions_per_student: 1,
-          total_marks: 50,
-          allowed_languages: ["python", "java", "c", "cpp"],
-          max_violations: 3
-        }],
-        upcoming: [],
-        completed: []
-      }
-    };
+    const res = await backendApi.get('/student/tests');
+    return res;
   },
 
   getAttempt: async (attemptId) => {
-    try {
-      const { data, error } = await supabase
-        .from('test_attempts')
-        .select('*, tests(max_violations)')
-        .eq('id', attemptId)
-        .maybeSingle();
-
-      if (!error && data) {
-        return {
-          data: {
-            ...data,
-            max_violations: data.tests?.max_violations ?? 3
-          }
-        };
-      }
-    } catch (e) {
-      console.warn('Supabase getAttempt error:', e);
-    }
-
-    return {
-      data: {
-        id: attemptId || 1,
-        test_id: 1,
-        violation_count: 0,
-        max_violations: 3,
-        status: 'in_progress',
-        expires_at: new Date(Date.now() + 3600000).toISOString()
-      }
-    };
+    const res = await backendApi.get(`/student/attempts/${attemptId}`);
+    return res;
   },
 
   getAttemptQuestions: async (attemptId) => {
-    try {
-      // 1. Get attempt details
-      const { data: attempt } = await supabase.from('test_attempts').select('*').eq('id', attemptId).maybeSingle();
-      if (!attempt) throw new Error('Attempt not found');
-
-      // 2. Get test details
-      const { data: test } = await supabase.from('tests').select('*').eq('id', attempt.test_id).maybeSingle();
-      if (!test) throw new Error('Test not found');
-
-      // Merge local test metadata
-      const meta = getStudentLocalTestMetadata()[test.id] || { year: 'Second Year', question_bank_id: test.question_bank_id || null, randomize_questions: !!test.randomize_questions };
-      const qBankId = meta.question_bank_id;
-      const randomize = meta.randomize_questions;
-      const questionsPerStudent = test.questions_per_student || 1;
-
-      // 3. Check if questions are already assigned in localStorage for this attempt
-      const attemptAssignedKey = `codearena_attempt_questions_${attemptId}`;
-      let assignedIds = [];
-      const savedAssigned = localStorage.getItem(attemptAssignedKey);
-      if (savedAssigned) {
-        assignedIds = JSON.parse(savedAssigned);
-      }
-
-      // 4. Fetch all questions
-      const allQsRes = await adminAPI.getQuestions();
-      let allQs = allQsRes.data || [];
-
-      // Filter by the test's question bank if one is selected
-      if (qBankId) {
-        allQs = allQs.filter(q => q.question_bank_id === parseInt(qBankId) || q.question_bank_id === qBankId);
-      }
-
-      // If no questions inside the bank, fallback to all questions
-      if (allQs.length === 0) {
-        const allFallbackQs = await adminAPI.getQuestions();
-        allQs = allFallbackQs.data || [];
-      }
-
-      let selectedQs = [];
-      if (assignedIds.length > 0) {
-        // Load the previously assigned questions
-        selectedQs = assignedIds.map(id => allQs.find(q => q.id === id)).filter(Boolean);
-      }
-
-      // If we don't have selected questions yet (or some were deleted), generate them
-      if (selectedQs.length < questionsPerStudent && allQs.length > 0) {
-        if (randomize) {
-          // Shuffle allQs and select questionsPerStudent
-          const shuffled = [...allQs].sort(() => 0.5 - Math.random());
-          selectedQs = shuffled.slice(0, questionsPerStudent);
-        } else {
-          // Just take the first questionsPerStudent
-          selectedQs = allQs.slice(0, questionsPerStudent);
-        }
-        // Save the assigned IDs
-        localStorage.setItem(attemptAssignedKey, JSON.stringify(selectedQs.map(q => q.id)));
-      }
-
-      if (selectedQs.length > 0) {
-        // Map questions to match nested "question" key schema expected by ExamInterface
-        const mapped = selectedQs.map((q, idx) => {
-          const savedCode = localStorage.getItem(`code_${attemptId}_${q.id}`) || '';
-          const savedLanguage = localStorage.getItem(`lang_${attemptId}_${q.id}`) || 'python';
-          
-          // Filter test cases: ONLY keep public ones (is_hidden is false/null)
-          // and slice it to AT MOST 2 test cases to prevent leaking,
-          // and delete is_hidden property from each testcase
-          let publicTestCases = (q.test_cases || [])
-            .filter(tc => !tc.is_hidden)
-            .slice(0, 2)
-            .map(tc => {
-              const cleanTc = { ...tc };
-              delete cleanTc.is_hidden;
-              return cleanTc;
-            });
-
-          if (publicTestCases.length === 0 && (q.sample_input || q.sample_output)) {
-            publicTestCases = [{
-              id: `sample_${q.id}`,
-              input: q.sample_input || '',
-              expected_output: q.sample_output || ''
-            }];
-          }
-
-          const cleanQuestion = {
-            ...q,
-            test_cases: publicTestCases
-          };
-          delete cleanQuestion.is_hidden;
-
-          return {
-            id: q.id,
-            attempt_id: attemptId,
-            question_id: q.id,
-            position: idx + 1,
-            question: cleanQuestion,
-            saved_code: savedCode,
-            saved_language: savedLanguage,
-            is_submitted: false,
-            submission_score: null
-          };
-        });
-        return { data: mapped };
-      }
-    } catch (e) {
-      console.warn('Supabase getAttemptQuestions error, falling back:', e);
-    }
-
-    // Default 5 coding questions fallback
-    const fallbackQuestions = [
-      {
-        id: 101, title: "Two Sum", difficulty: "easy", marks: 10, topic: "Arrays",
-        statement: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.",
-        input_format: "First line: n\nSecond line: n integers\nThird line: target", output_format: "Two space-separated indices",
-        sample_input: "4\n2 7 11 15\n9", sample_output: "0 1", explanation: "nums[0] + nums[1] = 9"
-      },
-      {
-        id: 102, title: "Reverse String", difficulty: "easy", marks: 10, topic: "Strings",
-        statement: "Write a function that reverses a string.",
-        input_format: "Single line string", output_format: "Reversed string",
-        sample_input: "hello", sample_output: "olleh", explanation: "Reverse of hello is olleh"
-      },
-      {
-        id: 103, title: "Palindrome Check", difficulty: "easy", marks: 10, topic: "Strings",
-        statement: "Determine if a string is a palindrome.",
-        input_format: "Single line string", output_format: "true or false",
-        sample_input: "racecar", sample_output: "true", explanation: "racecar is a palindrome"
-      },
-      {
-        id: 104, title: "Maximum Subarray", difficulty: "medium", marks: 10, topic: "Arrays",
-        statement: "Find contiguous subarray with largest sum.",
-        input_format: "First line: n\nSecond line: n integers", output_format: "Largest sum integer",
-        sample_input: "9\n-2 1 -3 4 -1 2 1 -5 4", sample_output: "6", explanation: "[4,-1,2,1] has max sum 6"
-      },
-      {
-        id: 105, title: "Valid Parentheses", difficulty: "easy", marks: 10, topic: "Stacks",
-        statement: "Determine if input string of brackets is valid.",
-        input_format: "Single string", output_format: "true or false",
-        sample_input: "()[]{}", sample_output: "true", explanation: "Brackets closed correctly"
-      }
-    ];
-
-    const fallbackMapped = fallbackQuestions.map((q, idx) => {
-      const savedCode = localStorage.getItem(`code_${attemptId}_${q.id}`) || '';
-      const savedLanguage = localStorage.getItem(`lang_${attemptId}_${q.id}`) || 'python';
-      return {
-        id: q.id,
-        attempt_id: attemptId,
-        question_id: q.id,
-        position: idx + 1,
-        question: q,
-        saved_code: savedCode,
-        saved_language: savedLanguage,
-        is_submitted: false,
-        submission_score: null
-      };
-    });
-
-    return { data: fallbackMapped };
+    // The backend only ever returns public test cases for assigned questions,
+    // and the assignment is generated server-side per attempt.
+    const res = await backendApi.get(`/student/attempts/${attemptId}/questions`);
+    return res;
   },
 
   startTest: async (testId) => {
-    try {
-      let currentUser = null;
-      try {
-        const userStr = localStorage.getItem('user');
-        if (userStr) currentUser = JSON.parse(userStr);
-      } catch (e) {
-        console.error(e);
-      }
-
-      if (!currentUser) {
-        throw new Error("User not authenticated");
-      }
-
-      // Check if active in_progress attempt already exists
-      const { data: existingAttempts } = await supabase
-        .from('test_attempts')
-        .select('*')
-        .eq('test_id', testId)
-        .eq('user_id', currentUser.id)
-        .order('id', { ascending: false });
-
-      if (existingAttempts && existingAttempts.length > 0) {
-        const activeAttempt = existingAttempts.find(a => a.status === 'in_progress');
-        if (activeAttempt) {
-          return { data: activeAttempt };
-        }
-      }
-
-      // Create new in_progress attempt
-      const durationMin = 60;
-      const expiresAt = new Date(Date.now() + durationMin * 60 * 1000).toISOString();
-
-      const { data: newAttempt, error } = await supabase
-        .from('test_attempts')
-        .insert({
-          test_id: testId,
-          user_id: currentUser.id,
-          status: 'in_progress',
-          score: 0,
-          violation_count: 0,
-          started_at: new Date().toISOString(),
-          expires_at: expiresAt
-        })
-        .select()
-        .single();
-
-      if (!error && newAttempt) {
-        return { data: newAttempt };
-      }
-    } catch (e) {
-      console.warn('Supabase startTest error:', e);
-    }
-
-    return { data: { id: Date.now(), test_id: testId, status: 'in_progress', expires_at: new Date(Date.now() + 3600000).toISOString() } };
+    // Backend creates the attempt with a server-side random question set.
+    // It is idempotent: a second call returns the existing attempt.
+    const res = await backendApi.post(`/student/tests/${testId}/start`);
+    return res;
   },
 
   saveCode: async (attemptId, data) => {
-    localStorage.setItem(`code_${attemptId}_${data.question_id}`, data.source_code);
-    localStorage.setItem(`lang_${attemptId}_${data.question_id}`, data.language);
-    return { data: { status: 'saved' } };
+    const res = await backendApi.put(`/student/attempts/${attemptId}/code`, data);
+    return res;
   },
 
   recordViolation: async (attemptId, data) => {
-    // 1. Call local backend if available
-    try {
-      const res = await backendApi.post(`/student/attempts/${attemptId}/violations`, {
-        violation_type: data.violation_type
-      });
-      if (res.data) {
-        return {
-          data: {
-            violation_count: res.data.violation_count,
-            max_violations: res.data.max_violations,
-            auto_submitted: res.data.auto_submitted
-          }
-        };
-      }
-    } catch (e) {
-      console.warn('Backend API recordViolation error, trying Supabase/localStorage:', e);
-    }
-
-    // 2. Fallback to Supabase / LocalStorage
-    let currentCount = 0;
-    try {
-      const { data: attempt } = await supabase
-        .from('test_attempts')
-        .select('violation_count')
-        .eq('id', attemptId)
-        .single();
-      if (attempt) currentCount = attempt.violation_count || 0;
-    } catch (e) {
-      console.warn('Supabase recordViolation get error:', e);
-      const savedCount = localStorage.getItem(`violation_count_${attemptId}`);
-      if (savedCount) currentCount = parseInt(savedCount);
-    }
-
-    const nextCount = currentCount + 1;
-    localStorage.setItem(`violation_count_${attemptId}`, nextCount);
-
-    try {
-      const { data: updatedAttempt, error } = await supabase
-        .from('test_attempts')
-        .update({ violation_count: nextCount })
-        .eq('id', attemptId)
-        .select('*, tests(max_violations)')
-        .single();
-
-      if (!error && updatedAttempt) {
-        return {
-          data: {
-            ...updatedAttempt,
-            max_violations: updatedAttempt.tests?.max_violations ?? 3
-          }
-        };
-      }
-    } catch (e) {
-      console.warn('Supabase recordViolation update error:', e);
-    }
-
-    return { 
-      data: { 
-        violation_count: nextCount, 
-        max_violations: 3,
-        auto_submitted: nextCount >= 3 
-      } 
-    };
+    const res = await backendApi.post(`/student/attempts/${attemptId}/violations`, {
+      violation_type: data.violation_type
+    });
+    return res;
   },
 
   finishTest: async (attemptId, status = 'submitted') => {
-    try {
-      const { data, error } = await supabase
-        .from('test_attempts')
-        .update({
-          status: status,
-          submitted_at: new Date().toISOString()
-        })
-        .eq('id', attemptId)
-        .select()
-        .single();
-
-      if (!error && data) {
-        return { data };
-      }
-    } catch (e) {
-      console.warn('Supabase finishTest error:', e);
-    }
-    return { data: { status: status } };
+    const res = await backendApi.post(`/student/attempts/${attemptId}/finish`);
+    return res;
   }
 };
 
@@ -544,51 +107,9 @@ export const codeAPI = {
   },
 
   submit: async (data) => {
-    try {
-      const res = await backendApi.post('/code/submit', data);
-
-      try {
-        const attemptId = data.attempt_id || 1;
-        await supabase.from('submissions').insert({
-          attempt_id: attemptId,
-          question_id: data.question_id,
-          language: data.language || 'python',
-          code: data.code || data.source_code,
-          status: res.data.status || 'submitted',
-          score: res.data.score || 0,
-          total_test_cases: res.data.total_test_cases || 0,
-          passed_test_cases: res.data.passed_test_cases || 0,
-        });
-
-        // Recalculate the overall attempt score (sum of max score per question)
-        const { data: allSubs } = await supabase
-          .from('submissions')
-          .select('question_id, score')
-          .eq('attempt_id', attemptId);
-          
-        if (allSubs) {
-          const maxScores = {};
-          allSubs.forEach(s => {
-            if (!maxScores[s.question_id] || s.score > maxScores[s.question_id]) {
-              maxScores[s.question_id] = s.score;
-            }
-          });
-          const totalScore = Object.values(maxScores).reduce((sum, s) => sum + (s || 0), 0);
-          
-          await supabase
-            .from('test_attempts')
-            .update({ score: totalScore })
-            .eq('id', attemptId);
-        }
-      } catch (supabaseError) {
-        console.warn('Supabase submission insert error:', supabaseError);
-      }
-
-      return res;
-    } catch (e) {
-      console.warn('Backend API submit error:', e);
-      throw e;
-    }
+    // The backend persists the submission and recomputes the attempt score.
+    const res = await backendApi.post('/code/submit', data);
+    return res;
   }
 };
 

@@ -3,12 +3,18 @@ Seed script: Creates demo data for CodeArena development.
 Run: python seed.py
 """
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from app.database.connection import AsyncSessionLocal, create_tables, drop_tables
 from app.models.user import User, UserRole, UserStatus
 from app.models.question import Question, TestCase
 from app.models.test import Test, TestQuestion
 from app.security.hashing import hash_password
+
+# Dev-only admin credentials. Override with ADMIN_EMAIL / ADMIN_PASSWORD in
+# production; never ship the demo credentials.
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@codearena.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 
 QUESTIONS_DATA = [
@@ -319,9 +325,9 @@ async def seed():
     async with AsyncSessionLocal() as session:
         # 1. Create Admin
         admin = User(
-            email="admin@codearena.com",
+            email=ADMIN_EMAIL,
             name="Admin User",
-            password_hash=hash_password("admin123"),
+            password_hash=hash_password(ADMIN_PASSWORD),
             role=UserRole.ADMIN,
             status=UserStatus.ACTIVE,
             is_active=True,
@@ -415,11 +421,13 @@ async def seed():
         await session.commit()
 
     print("[SUCCESS] Seed data created successfully!")
+    if os.environ.get("ADMIN_PASSWORD"):
+        print("[WARNING] ADMIN_PASSWORD env var is set; the printed credentials below are overridden by it.")
     print()
     print("-" * 40)
-    print("  Admin Login:")
-    print("    Email:    admin@codearena.com")
-    print("    Password: admin123")
+    print("  Admin Login (DEV ONLY - change in production!):")
+    print(f"    Email:    {ADMIN_EMAIL}")
+    print(f"    Password: {ADMIN_PASSWORD}")
     print()
     print("  Student Login (example):")
     print("    Register: STU001")

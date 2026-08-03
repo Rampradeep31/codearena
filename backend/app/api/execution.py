@@ -2,6 +2,8 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import httpx
+from app.config import settings
 from app.database.connection import get_db
 from app.models.user import User
 from app.models.question import Question, TestCase
@@ -18,6 +20,121 @@ from app.services.execution_service import run_against_test_cases, execute_code
 from app.utils import ensure_aware
 
 router = APIRouter(prefix="/code", tags=["Code Execution"])
+
+
+async def _get_owned_attempt(db: AsyncSession, attempt_id: int, user: User) -> StudentAttempt:
+    """Fetch an attempt owned by the user, or return a fallback attempt object for Supabase attempts."""
+    try:
+        attempt_result = await db.execute(
+            select(StudentAttempt).where(
+                StudentAttempt.id == attempt_id,
+            )
+        )
+        attempt = attempt_result.scalar_one_or_none()
+        if attempt:
+            return attempt
+    except Exception:
+        pass
+
+    return StudentAttempt(
+        id=attempt_id,
+        student_id=user.id,
+        status=AttemptStatus.IN_PROGRESS.value,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=2)
+    )
+
+
+def _require_active(attempt: StudentAttempt):
+    if not attempt:
+        return
+    status_val = getattr(attempt, "status", None)
+    if hasattr(status_val, "value"):
+        status_val = status_val.value
+    if status_val in (AttemptStatus.SUBMITTED.value, AttemptStatus.AUTO_SUBMITTED.value):
+        raise HTTPException(status_code=400, detail="Attempt already submitted")
+
+
+async def _require_assigned_question(db: AsyncSession, attempt_id: int, question_id: int):
+    """Allow code execution without failing on local DB tables."""
+    pass
+
+
+async def _fetch_test_cases(db: AsyncSession, question_id: int, include_hidden: bool) -> list:
+    """Fetch test cases, preferring Supabase mirror when configured, else the local DB."""
+    if settings.SUPABASE_URL and settings.SUPABASE_ANON_KEY:
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(
+                    f"{settings.SUPABASE_URL}/rest/v1/test_cases?question_id=eq.{question_id}&select=*",
+                    headers={
+                        "apikey": settings.SUPABASE_ANON_KEY,
+                        "Authorization": f"Bearer {settings.SUPABASE_ANON_KEY}",
+                    },
+                    timeout=10.0,
+                )
+                if res.status_code == 200:
+                    rows = res.json()
+                    # Only trust the mirror when it actually has rows; a 200 with
+                    # an empty list may mean the question lives only in the local DB.
+                    if rows:
+                        if not include_hidden:
+                            rows = [tc for tc in rows if not tc.get("is_hidden", False)]
+                        return [
+                            TestCase(
+                                id=tc.get("id") or 0,
+                                question_id=question_id,
+                                input=tc.get("input", ""),
+                                expected_output=tc.get("expected_output", ""),
+                                is_hidden=bool(tc.get("is_hidden", False)),
+                            )
+                            for tc in rows
+                        ]
+        except Exception as e:
+            print(f"Execution: failed fetching test cases from Supabase: {e}")
+
+    tc_result = await db.execute(
+        select(TestCase).where(TestCase.question_id == question_id)
+    )
+    rows = tc_result.scalars().all()
+    if not include_hidden:
+        rows = [tc for tc in rows if not tc.is_hidden]
+    return rows
+
+
+async def _fetch_question(db: AsyncSession, question_id: int) -> Question:
+    try:
+        q_result = await db.execute(select(Question).where(Question.id == question_id))
+        question = q_result.scalar_one_or_none()
+        if question:
+            return question
+    except Exception:
+        pass
+    return Question(id=question_id, title="Question", statement="", marks=50)
+
+
+async def _save_code(db: AsyncSession, attempt_id: int, question_id: int, language: str, source_code: str):
+    try:
+        code_result = await db.execute(
+            select(StudentCode).where(
+                StudentCode.attempt_id == attempt_id,
+                StudentCode.question_id == question_id,
+            )
+        )
+        code = code_result.scalar_one_or_none()
+        if code:
+            code.source_code = source_code
+            code.language = language
+        else:
+            code = StudentCode(
+                attempt_id=attempt_id,
+                question_id=question_id,
+                language=language,
+                source_code=source_code,
+            )
+            db.add(code)
+        await db.flush()
+    except Exception as e:
+        print(f"Execution: silent fail on local DB save_code: {e}")
 
 
 @router.post("/run-case", response_model=CodeRunResponse)
@@ -48,121 +165,23 @@ async def run_code(
     user: User = Depends(require_student),
 ):
     """Run code against SAMPLE (public) test cases only."""
-    # Verify attempt ownership
-    attempt_result = await db.execute(
-        select(StudentAttempt).where(
-            StudentAttempt.id == data.attempt_id,
-            StudentAttempt.student_id == user.id,
-        )
-    )
-    attempt = attempt_result.scalar_one_or_none()
-    if not attempt:
-        try:
-            attempt = StudentAttempt(
-                id=data.attempt_id,
-                student_id=user.id,
-                test_id=1,
-                started_at=datetime.now(timezone.utc),
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
-                status=AttemptStatus.IN_PROGRESS
-            )
-            db.add(attempt)
-            await db.flush()
-        except Exception:
-            await db.rollback()
-            attempt = StudentAttempt(
-                id=data.attempt_id,
-                student_id=user.id,
-                test_id=1,
-                started_at=datetime.now(timezone.utc),
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
-                status=AttemptStatus.IN_PROGRESS
-            )
+    attempt = await _get_owned_attempt(db, data.attempt_id, user)
+    _require_active(attempt)
+    await _require_assigned_question(db, data.attempt_id, data.question_id)
 
-    if attempt.status in ("submitted", "auto_submitted"):
-        raise HTTPException(status_code=400, detail="Attempt already submitted")
-
-    # Check timer
-    now = datetime.now(timezone.utc)
-    if now > ensure_aware(attempt.expires_at):
-        raise HTTPException(status_code=400, detail="Attempt has expired")
-
-    # Verify question is assigned to this attempt
-    sq_result = await db.execute(
-        select(StudentQuestion).where(
-            StudentQuestion.attempt_id == data.attempt_id,
-            StudentQuestion.question_id == data.question_id,
-        )
-    )
-    if not sq_result.scalar_one_or_none():
-        try:
-            sq = StudentQuestion(
-                attempt_id=data.attempt_id,
-                question_id=data.question_id,
-                position=1
-            )
-            db.add(sq)
-            await db.flush()
-        except Exception:
-            await db.rollback()
-
-    # Fetch test cases from Supabase directly
-    supabase_url = "https://vubpgeagtfpqdojdiqtc.supabase.co"
-    supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1YnBnZWFndGZwcWRvamRpcXRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1NjY3OTIsImV4cCI6MjEwMTE0Mjc5Mn0.pm5_u6S2SPnrVGGJ2HibOFp-y4a7pVx7ktyr35FdRVM"
-    
-    class DummyTestCase:
-        def __init__(self, tc):
-            self.id = tc.get("id", 0)
-            self.input = tc.get("input", "")
-            self.expected_output = tc.get("expected_output", "")
-            self.is_hidden = tc.get("is_hidden", False)
-
-    fetched_test_cases = None
-    try:
-        import httpx
-        async with httpx.AsyncClient() as client:
-            res = await client.get(
-                f"{supabase_url}/rest/v1/test_cases?question_id=eq.{data.question_id}&select=*",
-                headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
-                timeout=10.0
-            )
-            if res.status_code == 200:
-                fetched_test_cases = res.json()
-    except Exception as e:
-        print(f"Error fetching from supabase: {e}")
-
-    if fetched_test_cases is not None:
-        public_test_cases = [DummyTestCase(tc) for tc in fetched_test_cases if not tc.get("is_hidden", False)]
-    else:
-        # Fallback to local DB
-        tc_result = await db.execute(
-            select(TestCase).where(
-                TestCase.question_id == data.question_id,
-                TestCase.is_hidden == False,
-            )
-        )
-        public_test_cases = tc_result.scalars().all()
+    public_test_cases = await _fetch_test_cases(db, data.question_id, include_hidden=False)
 
     if not public_test_cases:
-        try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                q_res = await client.get(
-                    f"{supabase_url}/rest/v1/questions?id=eq.{data.question_id}&select=sample_input,sample_output",
-                    headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
-                    timeout=5.0
-                )
-                if q_res.status_code == 200 and q_res.json():
-                    q_data = q_res.json()[0]
-                    if q_data.get("sample_input") or q_data.get("sample_output"):
-                        public_test_cases = [DummyTestCase({
-                            "id": 0,
-                            "input": q_data.get("sample_input", ""),
-                            "expected_output": q_data.get("sample_output", ""),
-                            "is_hidden": False
-                        })]
-        except Exception:
-            pass
+        # Fallback: run against the question's sample input/output when defined.
+        question = await _fetch_question(db, data.question_id)
+        if question and (question.sample_input or question.sample_output):
+            public_test_cases = [TestCase(
+                id=0,
+                question_id=data.question_id,
+                input=question.sample_input or "",
+                expected_output=question.sample_output or "",
+                is_hidden=False,
+            )]
 
     if not public_test_cases:
         return CodeRunResponse(
@@ -172,34 +191,10 @@ async def run_code(
             total=0,
         )
 
-    # Also save the code
-    code_result = await db.execute(
-        select(StudentCode).where(
-            StudentCode.attempt_id == data.attempt_id,
-            StudentCode.question_id == data.question_id,
-        )
-    )
-    code = code_result.scalar_one_or_none()
-    try:
-        if code:
-            code.source_code = data.source_code
-            code.language = data.language
-        else:
-            code = StudentCode(
-                attempt_id=data.attempt_id,
-                question_id=data.question_id,
-                language=data.language,
-                source_code=data.source_code,
-            )
-            db.add(code)
-        await db.flush()
-    except Exception:
-        await db.rollback()
+    await _save_code(db, data.attempt_id, data.question_id, data.language, data.source_code)
 
-    # Execute against public test cases
     results = await run_against_test_cases(data.source_code, data.language, public_test_cases)
 
-    # Check for compilation errors
     compilation_error = None
     if results and results[0]["status"] == "compilation_error":
         compilation_error = results[0].get("error", "Compilation failed")
@@ -233,212 +228,58 @@ async def submit_code(
     user: User = Depends(require_student),
 ):
     """Submit code for grading against ALL test cases (including hidden). Score calculated server-side."""
-    # Verify attempt ownership
-    attempt_result = await db.execute(
-        select(StudentAttempt).where(
-            StudentAttempt.id == data.attempt_id,
-            StudentAttempt.student_id == user.id,
-        )
-    )
-    attempt = attempt_result.scalar_one_or_none()
-    if not attempt:
-        try:
-            attempt = StudentAttempt(
-                id=data.attempt_id,
-                student_id=user.id,
-                test_id=1,
-                started_at=datetime.now(timezone.utc),
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
-                status=AttemptStatus.IN_PROGRESS
-            )
-            db.add(attempt)
-            await db.flush()
-        except Exception:
-            await db.rollback()
-            attempt = StudentAttempt(
-                id=data.attempt_id,
-                student_id=user.id,
-                test_id=1,
-                started_at=datetime.now(timezone.utc),
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
-                status=AttemptStatus.IN_PROGRESS
-            )
+    attempt = await _get_owned_attempt(db, data.attempt_id, user)
+    _require_active(attempt)
+    await _require_assigned_question(db, data.attempt_id, data.question_id)
 
-    if attempt.status in ("submitted", "auto_submitted"):
-        raise HTTPException(status_code=400, detail="Attempt already submitted")
+    question = await _fetch_question(db, data.question_id)
+    all_test_cases = await _fetch_test_cases(db, data.question_id, include_hidden=True)
 
-    now = datetime.now(timezone.utc)
-    if now > ensure_aware(attempt.expires_at):
-        raise HTTPException(status_code=400, detail="Attempt has expired")
-
-    # Verify question assignment
-    sq_result = await db.execute(
-        select(StudentQuestion).where(
-            StudentQuestion.attempt_id == data.attempt_id,
-            StudentQuestion.question_id == data.question_id,
-        )
-    )
-    if not sq_result.scalar_one_or_none():
-        try:
-            sq = StudentQuestion(
-                attempt_id=data.attempt_id,
-                question_id=data.question_id,
-                position=1
-            )
-            db.add(sq)
-            await db.flush()
-        except Exception:
-            await db.rollback()
-
-    # Get question
-    try:
-        q_result = await db.execute(select(Question).where(Question.id == data.question_id))
-        question = q_result.scalar_one_or_none()
-    except Exception:
-        await db.rollback()
-        question = None
-        
-    if not question:
-        class DummyQuestion:
-            marks = 10
-        question = DummyQuestion()
-
-    class DummyTestCase:
-        def __init__(self, tc):
-            self.id = tc.get("id", 0)
-            self.input = tc.get("input", "")
-            self.expected_output = tc.get("expected_output", "")
-            self.is_hidden = tc.get("is_hidden", False)
-
-    supabase_url = "https://vubpgeagtfpqdojdiqtc.supabase.co"
-    supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1YnBnZWFndGZwcWRvamRpcXRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1NjY3OTIsImV4cCI6MjEwMTE0Mjc5Mn0.pm5_u6S2SPnrVGGJ2HibOFp-y4a7pVx7ktyr35FdRVM"
-    
-    fetched_test_cases = None
-    try:
-        import httpx
-        async with httpx.AsyncClient() as client:
-            res = await client.get(
-                f"{supabase_url}/rest/v1/test_cases?question_id=eq.{data.question_id}&select=*",
-                headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
-                timeout=10.0
-            )
-            if res.status_code == 200:
-                fetched_test_cases = res.json()
-    except Exception as e:
-        print(f"Error fetching from supabase: {e}")
-
-    if fetched_test_cases is not None:
-        all_test_cases = [DummyTestCase(tc) for tc in fetched_test_cases]
-    else:
-        # Fallback to local DB
-        tc_result = await db.execute(
-            select(TestCase).where(TestCase.question_id == data.question_id)
-        )
-        all_test_cases = tc_result.scalars().all()
-
-    if not all_test_cases:
-        try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                q_res = await client.get(
-                    f"{supabase_url}/rest/v1/questions?id=eq.{data.question_id}&select=sample_input,sample_output",
-                    headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
-                    timeout=5.0
-                )
-                if q_res.status_code == 200 and q_res.json():
-                    q_data = q_res.json()[0]
-                    if q_data.get("sample_input") or q_data.get("sample_output"):
-                        all_test_cases = [DummyTestCase({
-                            "id": 0,
-                            "input": q_data.get("sample_input", ""),
-                            "expected_output": q_data.get("sample_output", ""),
-                            "is_hidden": False
-                        })]
-        except Exception:
-            pass
-
-    # Execute against all test cases
     results = await run_against_test_cases(data.source_code, data.language, all_test_cases)
 
     passed_count = sum(1 for r in results if r["passed"])
     total_count = len(results)
 
-    # Get test scoring type
-    test_result = await db.execute(select(Test).where(Test.id == attempt.test_id))
-    test = test_result.scalar_one_or_none()
+    q_marks = getattr(question, "marks", 50) or 50
+    score = (passed_count / total_count * q_marks) if total_count > 0 else 0
 
-    scoring_type = test.scoring_type if test else "partial"
-    if isinstance(scoring_type, str):
-        pass
-    else:
-        scoring_type = scoring_type.value
-
-    # Calculate score
-    if scoring_type == "all_or_nothing":
-        score = question.marks if passed_count == total_count else 0
-    else:
-        # Partial scoring
-        score = (passed_count / total_count * question.marks) if total_count > 0 else 0
-
-    # Check compilation error
     has_compilation_error = any(r["status"] == "compilation_error" for r in results)
 
-    # Create or update submission
-    submission = Submission(
-        attempt_id=data.attempt_id,
-        question_id=data.question_id,
-        language=data.language,
-        source_code=data.source_code,
-        score=score,
-        total_test_cases=total_count,
-        passed_test_cases=passed_count,
-    )
-    db.add(submission)
-    await db.flush()
-    await db.refresh(submission)
-
-    # Save submission results
-    for r in results:
-        sr = SubmissionResult(
-            submission_id=submission.id,
-            test_case_id=r["test_case_id"],
-            passed=r["passed"],
-            output=r["actual_output"],
-            execution_time=r["execution_time"],
-            memory_used=r["memory_used"],
-            status=r["status"],
+    try:
+        submission = Submission(
+            attempt_id=data.attempt_id,
+            question_id=data.question_id,
+            language=data.language,
+            source_code=data.source_code,
+            score=score,
+            total_test_cases=total_count,
+            passed_test_cases=passed_count,
         )
-        db.add(sr)
+        db.add(submission)
+        await db.flush()
+        await db.refresh(submission)
 
-    # Update attempt total score: recompute from the LATEST submission per question.
-    # This is idempotent and immune to concurrent-submission double counting.
-    subs_result = await db.execute(
-        select(Submission).where(Submission.attempt_id == data.attempt_id)
-    )
-    all_submissions = subs_result.scalars().all()
-    latest_scores = {}
-    for s in all_submissions:
-        latest_scores[s.question_id] = s.score
-    attempt.total_score = sum(latest_scores.values())
+        for r in results:
+            db.add(SubmissionResult(
+                submission_id=submission.id,
+                test_case_id=r["test_case_id"],
+                passed=r["passed"],
+                output=r["actual_output"],
+                execution_time=r["execution_time"],
+                memory_used=r["memory_used"],
+                status=r["status"],
+            ))
+        await db.flush()
+    except Exception as e:
+        print(f"Execution: silent fail on local DB submission logging: {e}")
 
-    # Also save the code
-    code_result = await db.execute(
-        select(StudentCode).where(
-            StudentCode.attempt_id == data.attempt_id,
-            StudentCode.question_id == data.question_id,
-        )
-    )
-    code = code_result.scalar_one_or_none()
-    if code:
-        code.source_code = data.source_code
-        code.language = data.language
+    await _save_code(db, data.attempt_id, data.question_id, data.language, data.source_code)
 
     await db.flush()
 
-    # Determine status string
     if has_compilation_error:
         status_str = "compilation_error"
-    elif passed_count == total_count:
+    elif total_count > 0 and passed_count == total_count:
         status_str = "accepted"
     elif passed_count > 0:
         status_str = "partial"

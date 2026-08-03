@@ -1,5 +1,6 @@
 import csv
 import io
+import secrets
 from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
@@ -238,6 +239,7 @@ async def import_students_csv(
     errors = []
     seen_regs = set()
     seen_emails = set()
+    created_passwords = []
 
     for i, row in enumerate(reader, start=2):
         try:
@@ -274,11 +276,16 @@ async def import_students_csv(
             if row.get("year"):
                 year = int(row["year"])
 
+            # If no password is provided, generate a strong random one instead
+            # of defaulting to the register number.
+            raw_password = (row.get("password") or "").strip()
+            password = raw_password if raw_password else secrets.token_urlsafe(12)
+
             student = User(
                 name=name,
                 register_number=reg,
                 email=email or f"{reg.lower()}@codearena.com",
-                password_hash=hash_password(row.get("password", reg).strip()),
+                password_hash=hash_password(password),
                 role=UserRole.STUDENT,
                 department=row.get("department", "").strip() or None,
                 year=year,
@@ -288,11 +295,17 @@ async def import_students_csv(
             )
             db.add(student)
             created += 1
+            if not raw_password:
+                created_passwords.append(f"{reg}: {password}")
         except Exception as e:
             errors.append(f"Row {i}: {str(e)}")
 
     await db.flush()
-    return {"created": created, "errors": errors}
+    return {
+        "created": created,
+        "errors": errors,
+        "generated_passwords": created_passwords,
+    }
 
 
 # ─── Question Bank ────────────────────────────────────
@@ -586,13 +599,22 @@ async def update_test(
     update_data = data.model_dump(exclude_unset=True)
     question_ids = update_data.pop("question_ids", None)
 
+    qps = data.questions_per_student if data.questions_per_student is not None else test.questions_per_student
+
     # Validate pool size if question pool is being replaced
-    qps = data.questions_per_student or test.questions_per_student
     if question_ids is not None and len(question_ids) < qps:
         raise HTTPException(
             status_code=400,
-            detail=f"Question pool has {len(question_ids)} questions but test requires {data.questions_per_student} per student",
+            detail=f"Question pool has {len(question_ids)} questions but test requires {qps} per student",
         )
+
+    # If replacing the pool, verify all ids exist
+    if question_ids is not None:
+        pool_result = await db.execute(
+            select(func.count(Question.id)).where(Question.id.in_(question_ids))
+        )
+        if pool_result.scalar() != len(question_ids):
+            raise HTTPException(status_code=400, detail="One or more question ids do not exist")
 
     for field, value in update_data.items():
         setattr(test, field, value)

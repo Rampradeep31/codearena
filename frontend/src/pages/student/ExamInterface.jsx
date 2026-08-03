@@ -21,134 +21,6 @@ const LANG_MAP = {
   cpp: { label: 'C++', monaco: 'cpp', template: '#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}\n' },
 };
 
-const DEFAULT_QUESTIONS = [
-  {
-    id: 101,
-    question_id: 101,
-    position: 1,
-    saved_code: '',
-    saved_language: 'python',
-    is_submitted: false,
-    submission_score: null,
-    question: {
-      id: 101,
-      title: "Two Sum",
-      difficulty: "easy",
-      marks: 50,
-      topic: "Arrays",
-      statement: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.",
-      input_format: "First line: n\nSecond line: n integers\nThird line: target",
-      output_format: "Two space-separated indices",
-      sample_input: "4\n2 7 11 15\n9",
-      sample_output: "0 1",
-      explanation: "nums[0] + nums[1] = 9",
-      test_cases: [
-        { id: 1, input: "4\n2 7 11 15\n9", expected_output: "0 1" }
-      ]
-    }
-  },
-  {
-    id: 102,
-    question_id: 102,
-    position: 2,
-    saved_code: '',
-    saved_language: 'python',
-    is_submitted: false,
-    submission_score: null,
-    question: {
-      id: 102,
-      title: "Reverse String",
-      difficulty: "easy",
-      marks: 10,
-      topic: "Strings",
-      statement: "Write a function that reverses a string.",
-      input_format: "Single line string",
-      output_format: "Reversed string",
-      sample_input: "hello",
-      sample_output: "olleh",
-      explanation: "Reverse of hello is olleh",
-      test_cases: [
-        { id: 2, input: "hello", expected_output: "olleh" }
-      ]
-    }
-  },
-  {
-    id: 103,
-    question_id: 103,
-    position: 3,
-    saved_code: '',
-    saved_language: 'python',
-    is_submitted: false,
-    submission_score: null,
-    question: {
-      id: 103,
-      title: "Palindrome Check",
-      difficulty: "easy",
-      marks: 10,
-      topic: "Strings",
-      statement: "Determine if a string is a palindrome.",
-      input_format: "Single line string",
-      output_format: "true or false",
-      sample_input: "racecar",
-      sample_output: "true",
-      explanation: "racecar is a palindrome",
-      test_cases: [
-        { id: 3, input: "racecar", expected_output: "true" }
-      ]
-    }
-  },
-  {
-    id: 104,
-    question_id: 104,
-    position: 4,
-    saved_code: '',
-    saved_language: 'python',
-    is_submitted: false,
-    submission_score: null,
-    question: {
-      id: 104,
-      title: "Maximum Subarray",
-      difficulty: "medium",
-      marks: 10,
-      topic: "Arrays",
-      statement: "Find contiguous subarray with largest sum.",
-      input_format: "First line: n\nSecond line: n integers",
-      output_format: "Largest sum integer",
-      sample_input: "9\n-2 1 -3 4 -1 2 1 -5 4",
-      sample_output: "6",
-      explanation: "[4,-1,2,1] has max sum 6",
-      test_cases: [
-        { id: 4, input: "9\n-2 1 -3 4 -1 2 1 -5 4", expected_output: "6" }
-      ]
-    }
-  },
-  {
-    id: 105,
-    question_id: 105,
-    position: 5,
-    saved_code: '',
-    saved_language: 'python',
-    is_submitted: false,
-    submission_score: null,
-    question: {
-      id: 105,
-      title: "Valid Parentheses",
-      difficulty: "easy",
-      marks: 10,
-      topic: "Stacks",
-      statement: "Determine if input string of brackets is valid.",
-      input_format: "Single string",
-      output_format: "true or false",
-      sample_input: "()[]{}",
-      sample_output: "true",
-      explanation: "Brackets closed correctly",
-      test_cases: [
-        { id: 5, input: "()[]{}", expected_output: "true" }
-      ]
-    }
-  }
-];
-
 export default function ExamInterface() {
   const { attemptId } = useParams();
   const navigate = useNavigate();
@@ -195,14 +67,14 @@ export default function ExamInterface() {
         studentAPI.getAttempt(attemptId),
         studentAPI.getAttemptQuestions(attemptId),
       ]);
-      
-      const att = attemptRes?.data || {
-        id: attemptId || Date.now(),
-        violation_count: 0,
-        status: 'in_progress',
-        expires_at: new Date(Date.now() + 3600000).toISOString()
-      };
-      
+
+      const att = attemptRes?.data;
+      if (!att) {
+        setLoadError('Attempt not found or you do not have access to it.');
+        setLoading(false);
+        return;
+      }
+
       setAttempt(att);
       setViolationCount(att.violation_count || 0);
 
@@ -211,20 +83,20 @@ export default function ExamInterface() {
         return;
       }
 
-      let qs = questionsRes?.data;
+      const qs = questionsRes?.data;
       if (!qs || !Array.isArray(qs) || qs.length === 0) {
-        qs = DEFAULT_QUESTIONS;
+        setLoadError('No questions were assigned for this attempt. Please contact your instructor.');
+        setLoading(false);
+        return;
       }
       setQuestions(qs);
 
-      if (qs.length > 0) {
-        const saved = qs[0];
-        const initialLang = saved.saved_language || 'python';
-        const initialCode = saved.saved_code || (LANG_MAP[initialLang] ? LANG_MAP[initialLang].template : '# Write your solution here\n');
-        setLanguage(initialLang);
-        setCode(initialCode);
-        lastSavedCode.current = saved.saved_code || '';
-      }
+      const saved = qs[0];
+      const initialLang = saved.saved_language || 'python';
+      const initialCode = saved.saved_code || (LANG_MAP[initialLang] ? LANG_MAP[initialLang].template : '# Write your solution here\n');
+      setLanguage(initialLang);
+      setCode(initialCode);
+      lastSavedCode.current = saved.saved_code || '';
 
       const parseUTC = (str) => {
         if (!str) return Date.now();
@@ -239,12 +111,8 @@ export default function ExamInterface() {
       const diffSec = Math.floor((expiresAt - now) / 1000);
       setTimeLeft(Math.max(0, diffSec));
     } catch (err) {
-      console.warn("loadAttempt error, applying fallback:", err);
-      setAttempt({ id: attemptId || Date.now(), violation_count: 0, status: 'in_progress', expires_at: new Date(Date.now() + 3600000).toISOString() });
-      setQuestions(DEFAULT_QUESTIONS);
-      setLanguage('python');
-      setCode(LANG_MAP['python'].template);
-      setTimeLeft(3600);
+      console.warn("loadAttempt error:", err);
+      setLoadError(err.response?.data?.detail || 'Failed to load the examination. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -381,11 +249,11 @@ export default function ExamInterface() {
   };
 
   const handleFaceTurn = () => {
-    // Only warn inside the webcam proctoring widget
+    recordViolation('face_turned');
   };
 
   const handleMultipleFaces = () => {
-    // Only warn inside the webcam proctoring widget
+    recordViolation('multiple_faces');
   };
 
   const requestFullscreen = async () => {
@@ -400,10 +268,11 @@ export default function ExamInterface() {
       } else if (docEl.msRequestFullscreen) {
         await docEl.msRequestFullscreen();
       }
+      // isFullscreen is only updated via the fullscreenchange handler so that
+      // a failed request cannot unlock the exam.
     } catch (err) {
       console.warn("Fullscreen request failed:", err);
-    } finally {
-      setIsFullscreen(true);
+      toast.error('Fullscreen was blocked. Your browser must allow fullscreen to continue the exam.');
     }
   };
 
@@ -540,6 +409,25 @@ export default function ExamInterface() {
     </div>
   );
 
+  if (loadError) return (
+    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
+      <div className="bg-dark-900 border border-dark-700/50 rounded-2xl p-8 max-w-md w-full text-center">
+        <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/20">
+          <HiOutlineExclamation className="w-7 h-7 text-red-500" />
+        </div>
+        <h1 className="text-lg font-bold text-white mb-2">Exam Unavailable</h1>
+        <p className="text-sm text-dark-400 mb-6 leading-relaxed">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => navigate('/student')}
+          className="px-5 py-2.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-colors cursor-pointer"
+        >
+          Back to Dashboard
+        </button>
+      </div>
+    </div>
+  );
+
   const currentQ = questions[currentIdx];
   const qData = currentQ?.question || currentQ;
 
@@ -562,13 +450,6 @@ export default function ExamInterface() {
                 className="w-full py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-brand-500/20 cursor-pointer"
               >
                 Enter Fullscreen & Start Exam
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsFullscreen(true)}
-                className="w-full py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 rounded-xl text-xs font-medium transition-colors"
-              >
-                Continue to Exam Interface
               </button>
             </div>
           </div>
