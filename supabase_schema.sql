@@ -126,5 +126,11 @@ VALUES
 (102, 'hello', 'olleh', false),
 (102, 'world', 'dlrow', false),
 (103, 'racecar', 'true', false),
-(103, 'hello', 'false', false)
+(103, 'hello', 'false', false),
+(104, '9\n-2 1 -3 4 -1 2 1 -5 4', '6', false),
+(104, '5\n5 4 -1 7 8', '23', false),
+(105, '()[]{}', 'true', false),
+(105, '(]', 'false', false),
+(105, '([)]', 'false', true),
+(105, '{[]}', 'true', true)
 ON CONFLICT DO NOTHING;

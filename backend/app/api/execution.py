@@ -144,6 +144,27 @@ async def run_code(
         public_test_cases = tc_result.scalars().all()
 
     if not public_test_cases:
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                q_res = await client.get(
+                    f"{supabase_url}/rest/v1/questions?id=eq.{data.question_id}&select=sample_input,sample_output",
+                    headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
+                    timeout=5.0
+                )
+                if q_res.status_code == 200 and q_res.json():
+                    q_data = q_res.json()[0]
+                    if q_data.get("sample_input") or q_data.get("sample_output"):
+                        public_test_cases = [DummyTestCase({
+                            "id": 0,
+                            "input": q_data.get("sample_input", ""),
+                            "expected_output": q_data.get("sample_output", ""),
+                            "is_hidden": False
+                        })]
+        except Exception:
+            pass
+
+    if not public_test_cases:
         return CodeRunResponse(
             compilation_status="success",
             results=[],
@@ -314,6 +335,27 @@ async def submit_code(
             select(TestCase).where(TestCase.question_id == data.question_id)
         )
         all_test_cases = tc_result.scalars().all()
+
+    if not all_test_cases:
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                q_res = await client.get(
+                    f"{supabase_url}/rest/v1/questions?id=eq.{data.question_id}&select=sample_input,sample_output",
+                    headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
+                    timeout=5.0
+                )
+                if q_res.status_code == 200 and q_res.json():
+                    q_data = q_res.json()[0]
+                    if q_data.get("sample_input") or q_data.get("sample_output"):
+                        all_test_cases = [DummyTestCase({
+                            "id": 0,
+                            "input": q_data.get("sample_input", ""),
+                            "expected_output": q_data.get("sample_output", ""),
+                            "is_hidden": False
+                        })]
+        except Exception:
+            pass
 
     # Execute against all test cases
     results = await run_against_test_cases(data.source_code, data.language, all_test_cases)

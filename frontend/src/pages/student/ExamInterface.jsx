@@ -667,21 +667,37 @@ export default function ExamInterface() {
                   )}
 
                   {/* Sample Test Cases */}
-                  {qData.test_cases?.map((tc, i) => (
-                    <div key={tc.id || i} className="mb-3">
-                      <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Sample {i + 1}</h4>
+                  {qData.test_cases && qData.test_cases.length > 0 ? (
+                    qData.test_cases.map((tc, i) => (
+                      <div key={tc.id || i} className="mb-3">
+                        <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Sample {i + 1}</h4>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-[10px] text-dark-500 mb-0.5">Input</p>
+                            <pre className="bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-xs text-dark-200 font-mono overflow-x-auto">{tc.input}</pre>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-dark-500 mb-0.5">Output</p>
+                            <pre className="bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-xs text-dark-200 font-mono overflow-x-auto">{tc.expected_output}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (qData.sample_input || qData.sample_output) ? (
+                    <div className="mb-3">
+                      <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Sample 1</h4>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <p className="text-[10px] text-dark-500 mb-0.5">Input</p>
-                          <pre className="bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-xs text-dark-200 font-mono overflow-x-auto">{tc.input}</pre>
+                          <pre className="bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-xs text-dark-200 font-mono overflow-x-auto">{qData.sample_input || '—'}</pre>
                         </div>
                         <div>
                           <p className="text-[10px] text-dark-500 mb-0.5">Output</p>
-                          <pre className="bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-xs text-dark-200 font-mono overflow-x-auto">{tc.expected_output}</pre>
+                          <pre className="bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-xs text-dark-200 font-mono overflow-x-auto">{qData.sample_output || '—'}</pre>
                         </div>
                       </div>
                     </div>
-                  ))}
+                  ) : null}
 
                   {qData.explanation && (
                     <div className="mb-3">

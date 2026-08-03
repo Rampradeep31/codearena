@@ -275,7 +275,7 @@ export const studentAPI = {
           // Filter test cases: ONLY keep public ones (is_hidden is false/null)
           // and slice it to AT MOST 2 test cases to prevent leaking,
           // and delete is_hidden property from each testcase
-          const publicTestCases = (q.test_cases || [])
+          let publicTestCases = (q.test_cases || [])
             .filter(tc => !tc.is_hidden)
             .slice(0, 2)
             .map(tc => {
@@ -283,6 +283,14 @@ export const studentAPI = {
               delete cleanTc.is_hidden;
               return cleanTc;
             });
+
+          if (publicTestCases.length === 0 && (q.sample_input || q.sample_output)) {
+            publicTestCases = [{
+              id: `sample_${q.id}`,
+              input: q.sample_input || '',
+              expected_output: q.sample_output || ''
+            }];
+          }
 
           const cleanQuestion = {
             ...q,
