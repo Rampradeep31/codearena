@@ -47,7 +47,8 @@ class StudentCreate(BaseModel):
     department: Optional[str] = None
     year: Optional[int] = Field(None, ge=1, le=5)
     section: Optional[str] = None
-    password: str = Field(..., min_length=4)
+    # Optional: a random password is generated server-side when omitted.
+    password: Optional[str] = Field(None, min_length=4, max_length=128)
 
 
 class StudentUpdate(BaseModel):
@@ -58,6 +59,33 @@ class StudentUpdate(BaseModel):
     section: Optional[str] = None
     status: Optional[str] = None
     password: Optional[str] = None
+
+
+# ─── Question Bank ────────────────────────────────────
+class QuestionBankCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    year: str = "Second Year"
+    status: str = "Active"
+
+
+class QuestionBankUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    year: Optional[str] = None
+    status: Optional[str] = None
+
+
+class QuestionBankOut(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    year: str
+    status: str
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ─── Question ─────────────────────────────────────────
@@ -99,6 +127,7 @@ class QuestionCreate(BaseModel):
     sample_input: Optional[str] = None
     sample_output: Optional[str] = None
     explanation: Optional[str] = None
+    question_bank_id: Optional[int] = None
     test_cases: List[TestCaseCreate] = []
 
     @model_validator(mode="after")
@@ -120,6 +149,9 @@ class QuestionUpdate(BaseModel):
     sample_input: Optional[str] = None
     sample_output: Optional[str] = None
     explanation: Optional[str] = None
+    question_bank_id: Optional[int] = None
+    # When provided, the question's test cases are fully replaced with this set.
+    test_cases: Optional[List[TestCaseCreate]] = None
 
 
 class QuestionOut(BaseModel):
@@ -135,6 +167,7 @@ class QuestionOut(BaseModel):
     sample_input: Optional[str] = None
     sample_output: Optional[str] = None
     explanation: Optional[str] = None
+    question_bank_id: Optional[int] = None
     test_cases: List[TestCaseOut] = []
     created_at: Optional[datetime] = None
 
@@ -166,6 +199,9 @@ class QuestionStudentOut(BaseModel):
 class TestCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=500)
     description: Optional[str] = None
+    year: str = "Second Year"
+    question_bank_id: Optional[int] = None
+    randomize_questions: bool = False
     start_time: datetime
     end_time: datetime
     duration_minutes: int = Field(..., ge=1)
@@ -198,6 +234,9 @@ class TestCreate(BaseModel):
 class TestUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    year: Optional[str] = None
+    question_bank_id: Optional[int] = None
+    randomize_questions: Optional[bool] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     duration_minutes: Optional[int] = None
@@ -218,6 +257,9 @@ class TestOut(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+    year: Optional[str] = None
+    question_bank_id: Optional[int] = None
+    randomize_questions: Optional[bool] = None
     start_time: datetime
     end_time: datetime
     duration_minutes: int
@@ -364,6 +406,32 @@ class DashboardStats(BaseModel):
     completed_tests: int
     total_questions: int
     total_submissions: int
+
+
+class SubmissionOut(BaseModel):
+    id: int
+    attempt_id: int
+    question_id: int
+    language: str
+    submitted_at: datetime
+    score: float
+    total_test_cases: int
+    passed_test_cases: int
+
+    class Config:
+        from_attributes = True
+
+
+class DashboardData(DashboardStats):
+    """Dashboard payload: aggregate stats plus the raw lists the admin UI
+    needs to render charts, filters and drill-downs."""
+
+    students: List[UserOut] = []
+    tests: List[TestOut] = []
+    questions: List[QuestionOut] = []
+    attempts: List[AttemptOut] = []
+    submissions: List[SubmissionOut] = []
+    banks: List[QuestionBankOut] = []
 
 
 class StudentMonitorRow(BaseModel):

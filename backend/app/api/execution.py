@@ -1,13 +1,9 @@
-from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-import httpx
-from app.config import settings
 from app.database.connection import get_db
 from app.models.user import User
 from app.models.question import Question, TestCase
-from app.models.test import Test
 from app.models.attempt import (
     StudentAttempt, StudentQuestion, StudentCode, Submission, SubmissionResult,
     AttemptStatus,
@@ -17,36 +13,24 @@ from app.schemas.schemas import (
 )
 from app.security.dependencies import require_student
 from app.services.execution_service import run_against_test_cases, execute_code
-from app.utils import ensure_aware
 
 router = APIRouter(prefix="/code", tags=["Code Execution"])
 
 
 async def _get_owned_attempt(db: AsyncSession, attempt_id: int, user: User) -> StudentAttempt:
-    """Fetch an attempt owned by the user, or return a fallback attempt object for Supabase attempts."""
-    try:
-        attempt_result = await db.execute(
-            select(StudentAttempt).where(
-                StudentAttempt.id == attempt_id,
-            )
-        )
-        attempt = attempt_result.scalar_one_or_none()
-        if attempt:
-            return attempt
-    except Exception:
-        pass
-
-    return StudentAttempt(
-        id=attempt_id,
-        student_id=user.id,
-        status=AttemptStatus.IN_PROGRESS.value,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=2)
+    """Fetch an attempt and verify it belongs to the authenticated student."""
+    result = await db.execute(
+        select(StudentAttempt).where(StudentAttempt.id == attempt_id)
     )
+    attempt = result.scalar_one_or_none()
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    if attempt.student_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your attempt")
+    return attempt
 
 
 def _require_active(attempt: StudentAttempt):
-    if not attempt:
-        return
     status_val = getattr(attempt, "status", None)
     if hasattr(status_val, "value"):
         status_val = status_val.value
@@ -55,43 +39,21 @@ def _require_active(attempt: StudentAttempt):
 
 
 async def _require_assigned_question(db: AsyncSession, attempt_id: int, question_id: int):
-    """Allow code execution without failing on local DB tables."""
-    pass
+    result = await db.execute(
+        select(StudentQuestion.id).where(
+            StudentQuestion.attempt_id == attempt_id,
+            StudentQuestion.question_id == question_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Question is not assigned to this attempt",
+        )
 
 
 async def _fetch_test_cases(db: AsyncSession, question_id: int, include_hidden: bool) -> list:
-    """Fetch test cases, preferring Supabase mirror when configured, else the local DB."""
-    if settings.SUPABASE_URL and settings.SUPABASE_ANON_KEY:
-        try:
-            async with httpx.AsyncClient() as client:
-                res = await client.get(
-                    f"{settings.SUPABASE_URL}/rest/v1/test_cases?question_id=eq.{question_id}&select=*",
-                    headers={
-                        "apikey": settings.SUPABASE_ANON_KEY,
-                        "Authorization": f"Bearer {settings.SUPABASE_ANON_KEY}",
-                    },
-                    timeout=10.0,
-                )
-                if res.status_code == 200:
-                    rows = res.json()
-                    # Only trust the mirror when it actually has rows; a 200 with
-                    # an empty list may mean the question lives only in the local DB.
-                    if rows:
-                        if not include_hidden:
-                            rows = [tc for tc in rows if not tc.get("is_hidden", False)]
-                        return [
-                            TestCase(
-                                id=tc.get("id") or 0,
-                                question_id=question_id,
-                                input=tc.get("input", ""),
-                                expected_output=tc.get("expected_output", ""),
-                                is_hidden=bool(tc.get("is_hidden", False)),
-                            )
-                            for tc in rows
-                        ]
-        except Exception as e:
-            print(f"Execution: failed fetching test cases from Supabase: {e}")
-
+    """Fetch test cases for a question from the database."""
     tc_result = await db.execute(
         select(TestCase).where(TestCase.question_id == question_id)
     )
@@ -102,39 +64,33 @@ async def _fetch_test_cases(db: AsyncSession, question_id: int, include_hidden: 
 
 
 async def _fetch_question(db: AsyncSession, question_id: int) -> Question:
-    try:
-        q_result = await db.execute(select(Question).where(Question.id == question_id))
-        question = q_result.scalar_one_or_none()
-        if question:
-            return question
-    except Exception:
-        pass
-    return Question(id=question_id, title="Question", statement="", marks=50)
+    q_result = await db.execute(select(Question).where(Question.id == question_id))
+    question = q_result.scalar_one_or_none()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return question
 
 
 async def _save_code(db: AsyncSession, attempt_id: int, question_id: int, language: str, source_code: str):
-    try:
-        code_result = await db.execute(
-            select(StudentCode).where(
-                StudentCode.attempt_id == attempt_id,
-                StudentCode.question_id == question_id,
-            )
+    code_result = await db.execute(
+        select(StudentCode).where(
+            StudentCode.attempt_id == attempt_id,
+            StudentCode.question_id == question_id,
         )
-        code = code_result.scalar_one_or_none()
-        if code:
-            code.source_code = source_code
-            code.language = language
-        else:
-            code = StudentCode(
-                attempt_id=attempt_id,
-                question_id=question_id,
-                language=language,
-                source_code=source_code,
-            )
-            db.add(code)
-        await db.flush()
-    except Exception as e:
-        print(f"Execution: silent fail on local DB save_code: {e}")
+    )
+    code = code_result.scalar_one_or_none()
+    if code:
+        code.source_code = source_code
+        code.language = language
+    else:
+        code = StudentCode(
+            attempt_id=attempt_id,
+            question_id=question_id,
+            language=language,
+            source_code=source_code,
+        )
+        db.add(code)
+    await db.flush()
 
 
 @router.post("/run-case", response_model=CodeRunResponse)
@@ -245,33 +201,29 @@ async def submit_code(
 
     has_compilation_error = any(r["status"] == "compilation_error" for r in results)
 
-    try:
-        submission = Submission(
-            attempt_id=data.attempt_id,
-            question_id=data.question_id,
-            language=data.language,
-            source_code=data.source_code,
-            score=score,
-            total_test_cases=total_count,
-            passed_test_cases=passed_count,
-        )
-        db.add(submission)
-        await db.flush()
-        await db.refresh(submission)
+    submission = Submission(
+        attempt_id=data.attempt_id,
+        question_id=data.question_id,
+        language=data.language,
+        source_code=data.source_code,
+        score=score,
+        total_test_cases=total_count,
+        passed_test_cases=passed_count,
+    )
+    db.add(submission)
+    await db.flush()
+    await db.refresh(submission)
 
-        for r in results:
-            db.add(SubmissionResult(
-                submission_id=submission.id,
-                test_case_id=r["test_case_id"],
-                passed=r["passed"],
-                output=r["actual_output"],
-                execution_time=r["execution_time"],
-                memory_used=r["memory_used"],
-                status=r["status"],
-            ))
-        await db.flush()
-    except Exception as e:
-        print(f"Execution: silent fail on local DB submission logging: {e}")
+    for r in results:
+        db.add(SubmissionResult(
+            submission_id=submission.id,
+            test_case_id=r["test_case_id"],
+            passed=r["passed"],
+            output=r["actual_output"],
+            execution_time=r["execution_time"],
+            memory_used=r["memory_used"],
+            status=r["status"],
+        ))
 
     await _save_code(db, data.attempt_id, data.question_id, data.language, data.source_code)
 

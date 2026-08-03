@@ -12,11 +12,14 @@ from app.models.question import Question, TestCase
 from app.models.test import Test, TestQuestion
 from app.models.attempt import StudentAttempt, Submission, StudentQuestion, StudentCode
 from app.models.violation import Violation
+from app.models.question_bank import QuestionBank
 from app.schemas.schemas import (
     StudentCreate, StudentUpdate, UserOut,
     QuestionCreate, QuestionUpdate, QuestionOut, TestCaseOut, TestCaseCreate,
     TestCreate, TestUpdate, TestOut,
-    DashboardStats, StudentMonitorRow, ResultRow, ViolationOut,
+    DashboardStats, DashboardData, SubmissionOut, AttemptOut,
+    QuestionBankCreate, QuestionBankUpdate, QuestionBankOut,
+    StudentMonitorRow, ResultRow, ViolationOut,
 )
 from app.security.dependencies import require_admin
 from app.security.hashing import hash_password
@@ -35,6 +38,8 @@ async def _test_out(db: AsyncSession, test: Test) -> TestOut:
     )
     return TestOut(
         id=test.id, name=test.name, description=test.description,
+        year=test.year, question_bank_id=test.question_bank_id,
+        randomize_questions=test.randomize_questions,
         start_time=test.start_time, end_time=test.end_time,
         duration_minutes=test.duration_minutes, total_marks=test.total_marks,
         questions_per_student=test.questions_per_student,
@@ -49,44 +54,98 @@ async def _test_out(db: AsyncSession, test: Test) -> TestOut:
     )
 
 
+async def _load_test_cases(db: AsyncSession, question_id: int) -> List[TestCaseOut]:
+    tc_result = await db.execute(
+        select(TestCase).where(TestCase.question_id == question_id)
+    )
+    return [
+        TestCaseOut(id=tc.id, input=tc.input, expected_output=tc.expected_output, is_hidden=tc.is_hidden)
+        for tc in tc_result.scalars().all()
+    ]
+
+
+def _question_out(q: Question, test_cases: Optional[List[TestCaseOut]] = None) -> QuestionOut:
+    return QuestionOut(
+        id=q.id, title=q.title, statement=q.statement,
+        difficulty=q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty,
+        marks=q.marks, topic=q.topic,
+        input_format=q.input_format, output_format=q.output_format,
+        constraints=q.constraints, sample_input=q.sample_input,
+        sample_output=q.sample_output, explanation=q.explanation,
+        question_bank_id=q.question_bank_id,
+        test_cases=test_cases or [],
+        created_at=q.created_at,
+    )
+
+
 # ─── Dashboard ────────────────────────────────────────
-@router.get("/dashboard", response_model=DashboardStats)
+@router.get("/dashboard", response_model=DashboardData)
 async def get_dashboard_stats(
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin_user: User = Depends(require_admin),
 ):
-    """Get aggregate dashboard statistics."""
+    """Get aggregate dashboard statistics plus the raw lists the UI needs."""
     now = datetime.now(timezone.utc)
-
-    students = await db.execute(select(func.count(User.id)).where(User.role == UserRole.STUDENT))
-    total_students = students.scalar() or 0
-
-    tests = await db.execute(select(func.count(Test.id)))
-    total_tests = tests.scalar() or 0
-
-    active = await db.execute(
+    total_students = (await db.execute(
+        select(func.count(User.id)).where(User.role == UserRole.STUDENT)
+    )).scalar() or 0
+    total_tests = (await db.execute(select(func.count(Test.id)))).scalar() or 0
+    active_tests = (await db.execute(
         select(func.count(Test.id)).where(and_(Test.start_time <= now, Test.end_time >= now))
-    )
-    active_tests = active.scalar() or 0
-
-    completed = await db.execute(
+    )).scalar() or 0
+    completed_tests = (await db.execute(
         select(func.count(Test.id)).where(Test.end_time < now)
-    )
-    completed_tests = completed.scalar() or 0
+    )).scalar() or 0
+    total_questions = (await db.execute(select(func.count(Question.id)))).scalar() or 0
+    total_submissions = (await db.execute(select(func.count(Submission.id)))).scalar() or 0
 
-    questions = await db.execute(select(func.count(Question.id)))
-    total_questions = questions.scalar() or 0
+    students = (await db.execute(
+        select(User).where(User.role == UserRole.STUDENT)
+    )).scalars().all()
+    tests = (await db.execute(select(Test))).scalars().all()
+    questions = (await db.execute(
+        select(Question).order_by(Question.created_at.desc())
+    )).scalars().all()
+    attempts = (await db.execute(
+        select(StudentAttempt).order_by(StudentAttempt.started_at.desc())
+    )).scalars().all()
+    submissions = (await db.execute(
+        select(Submission).order_by(Submission.submitted_at.desc())
+    )).scalars().all()
+    banks = (await db.execute(
+        select(QuestionBank).order_by(QuestionBank.created_at.desc())
+    )).scalars().all()
 
-    submissions = await db.execute(select(func.count(Submission.id)))
-    total_submissions = submissions.scalar() or 0
-
-    return DashboardStats(
+    return DashboardData(
         total_students=total_students,
         total_tests=total_tests,
         active_tests=active_tests,
         completed_tests=completed_tests,
         total_questions=total_questions,
         total_submissions=total_submissions,
+        students=[
+            UserOut(
+                id=s.id, email=s.email, register_number=s.register_number,
+                name=s.name, role=s.role.value if hasattr(s.role, 'value') else s.role,
+                department=s.department, year=s.year, section=s.section,
+                status=s.status.value if hasattr(s.status, 'value') else s.status,
+            ) for s in students
+        ],
+        tests=[await _test_out(db, t) for t in tests],
+        questions=[_question_out(q) for q in questions],
+        attempts=[
+            AttemptOut(
+                id=a.id, student_id=a.student_id, test_id=a.test_id,
+                started_at=a.started_at, expires_at=a.expires_at,
+                submitted_at=a.submitted_at,
+                status=a.status if isinstance(a.status, str) else a.status.value,
+                violation_count=a.violation_count,
+                submission_reason=a.submission_reason,
+                total_score=a.total_score, total_possible=a.total_possible,
+            ) for a in attempts
+        ],
+        submissions=[SubmissionOut.from_orm(s) for s in submissions],
+        banks=[QuestionBankOut.from_orm(b) for b in banks],
     )
 
 
@@ -144,11 +203,14 @@ async def create_student(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Register number or email already exists")
 
+    # Optional password: generate a strong random one when not provided.
+    password = data.password or secrets.token_urlsafe(12)
+
     student = User(
         name=data.name,
         register_number=data.register_number,
         email=data.email,
-        password_hash=hash_password(data.password),
+        password_hash=hash_password(password),
         role=UserRole.STUDENT,
         department=data.department,
         year=data.year,
@@ -333,27 +395,7 @@ async def list_questions(
     result = await db.execute(query)
     questions = result.scalars().all()
 
-    output = []
-    for q in questions:
-        tc_result = await db.execute(
-            select(TestCase).where(TestCase.question_id == q.id)
-        )
-        test_cases = tc_result.scalars().all()
-
-        output.append(QuestionOut(
-            id=q.id, title=q.title, statement=q.statement,
-            difficulty=q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty,
-            marks=q.marks, topic=q.topic,
-            input_format=q.input_format, output_format=q.output_format,
-            constraints=q.constraints, sample_input=q.sample_input,
-            sample_output=q.sample_output, explanation=q.explanation,
-            test_cases=[TestCaseOut(
-                id=tc.id, input=tc.input, expected_output=tc.expected_output, is_hidden=tc.is_hidden
-            ) for tc in test_cases],
-            created_at=q.created_at,
-        ))
-
-    return output
+    return [_question_out(q, await _load_test_cases(db, q.id)) for q in questions]
 
 
 @router.post("/questions", response_model=QuestionOut, status_code=201)
@@ -369,6 +411,7 @@ async def create_question(
         input_format=data.input_format, output_format=data.output_format,
         constraints=data.constraints, sample_input=data.sample_input,
         sample_output=data.sample_output, explanation=data.explanation,
+        question_bank_id=data.question_bank_id,
     )
     db.add(question)
     await db.flush()
@@ -389,14 +432,7 @@ async def create_question(
             id=tc.id, input=tc.input, expected_output=tc.expected_output, is_hidden=tc.is_hidden
         ))
 
-    return QuestionOut(
-        id=question.id, title=question.title, statement=question.statement,
-        difficulty=data.difficulty, marks=question.marks, topic=question.topic,
-        input_format=question.input_format, output_format=question.output_format,
-        constraints=question.constraints, sample_input=question.sample_input,
-        sample_output=question.sample_output, explanation=question.explanation,
-        test_cases=test_cases, created_at=question.created_at,
-    )
+    return _question_out(question, test_cases)
 
 
 @router.get("/questions/{question_id}", response_model=QuestionOut)
@@ -411,21 +447,7 @@ async def get_question(
     if not q:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    tc_result = await db.execute(select(TestCase).where(TestCase.question_id == q.id))
-    test_cases = tc_result.scalars().all()
-
-    return QuestionOut(
-        id=q.id, title=q.title, statement=q.statement,
-        difficulty=q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty,
-        marks=q.marks, topic=q.topic,
-        input_format=q.input_format, output_format=q.output_format,
-        constraints=q.constraints, sample_input=q.sample_input,
-        sample_output=q.sample_output, explanation=q.explanation,
-        test_cases=[TestCaseOut(
-            id=tc.id, input=tc.input, expected_output=tc.expected_output, is_hidden=tc.is_hidden
-        ) for tc in test_cases],
-        created_at=q.created_at,
-    )
+    return _question_out(q, await _load_test_cases(db, q.id))
 
 
 @router.put("/questions/{question_id}", response_model=QuestionOut)
@@ -435,33 +457,38 @@ async def update_question(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Update a question."""
+    """Update a question. When test_cases is provided, the full set is replaced."""
     result = await db.execute(select(Question).where(Question.id == question_id))
     question = result.scalar_one_or_none()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    test_cases = update_data.pop("test_cases", None)
+
+    if "question_bank_id" in update_data:
+        value = update_data.pop("question_bank_id")
+        if isinstance(value, str) and value == "":
+            value = None
+        question.question_bank_id = value
+
+    for field, value in update_data.items():
         setattr(question, field, value)
+
+    if test_cases is not None:
+        await db.execute(delete(TestCase).where(TestCase.question_id == question.id))
+        for tc_data in test_cases:
+            db.add(TestCase(
+                question_id=question.id,
+                input=tc_data.input,
+                expected_output=tc_data.expected_output,
+                is_hidden=tc_data.is_hidden,
+            ))
 
     await db.flush()
     await db.refresh(question)
 
-    tc_result = await db.execute(select(TestCase).where(TestCase.question_id == question.id))
-    test_cases = tc_result.scalars().all()
-
-    return QuestionOut(
-        id=question.id, title=question.title, statement=question.statement,
-        difficulty=question.difficulty.value if hasattr(question.difficulty, 'value') else question.difficulty,
-        marks=question.marks, topic=question.topic,
-        input_format=question.input_format, output_format=question.output_format,
-        constraints=question.constraints, sample_input=question.sample_input,
-        sample_output=question.sample_output, explanation=question.explanation,
-        test_cases=[TestCaseOut(
-            id=tc.id, input=tc.input, expected_output=tc.expected_output, is_hidden=tc.is_hidden
-        ) for tc in test_cases],
-        created_at=question.created_at,
-    )
+    return _question_out(question, await _load_test_cases(db, question.id))
 
 
 @router.delete("/questions/{question_id}")
@@ -522,6 +549,88 @@ async def delete_test_case(
     return {"message": "Test case deleted"}
 
 
+# ─── Question Bank Management ─────────────────────────
+@router.get("/question-banks", response_model=List[QuestionBankOut])
+async def list_question_banks(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """List all question banks."""
+    result = await db.execute(select(QuestionBank).order_by(QuestionBank.created_at.desc()))
+    return result.scalars().all()
+
+
+@router.post("/question-banks", response_model=QuestionBankOut, status_code=201)
+async def create_question_bank(
+    data: QuestionBankCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Create a question bank."""
+    bank = QuestionBank(
+        title=data.title,
+        description=data.description,
+        year=data.year or "Second Year",
+        status=data.status or "Active",
+    )
+    db.add(bank)
+    await db.flush()
+    await db.refresh(bank)
+    return QuestionBankOut.from_orm(bank)
+
+
+@router.get("/question-banks/{bank_id}", response_model=QuestionBankOut)
+async def get_question_bank(
+    bank_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Get a single question bank."""
+    result = await db.execute(select(QuestionBank).where(QuestionBank.id == bank_id))
+    bank = result.scalar_one_or_none()
+    if not bank:
+        raise HTTPException(status_code=404, detail="Question bank not found")
+    return QuestionBankOut.from_orm(bank)
+
+
+@router.put("/question-banks/{bank_id}", response_model=QuestionBankOut)
+async def update_question_bank(
+    bank_id: int,
+    data: QuestionBankUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Update a question bank."""
+    result = await db.execute(select(QuestionBank).where(QuestionBank.id == bank_id))
+    bank = result.scalar_one_or_none()
+    if not bank:
+        raise HTTPException(status_code=404, detail="Question bank not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        if value is not None:
+            setattr(bank, field, value)
+
+    await db.flush()
+    await db.refresh(bank)
+    return QuestionBankOut.from_orm(bank)
+
+
+@router.delete("/question-banks/{bank_id}")
+async def delete_question_bank(
+    bank_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Delete a question bank. Questions and tests referencing it lose the link."""
+    result = await db.execute(select(QuestionBank).where(QuestionBank.id == bank_id))
+    bank = result.scalar_one_or_none()
+    if not bank:
+        raise HTTPException(status_code=404, detail="Question bank not found")
+
+    await db.delete(bank)
+    return {"message": "Question bank deleted"}
+
+
 # ─── Test Management ─────────────────────────────────
 @router.get("/tests", response_model=List[TestOut])
 async def list_tests(
@@ -561,6 +670,8 @@ async def create_test(
 
     test = Test(
         name=data.name, description=data.description,
+        year=data.year, question_bank_id=data.question_bank_id,
+        randomize_questions=data.randomize_questions,
         start_time=data.start_time, end_time=data.end_time,
         duration_minutes=data.duration_minutes, total_marks=data.total_marks,
         questions_per_student=data.questions_per_student,

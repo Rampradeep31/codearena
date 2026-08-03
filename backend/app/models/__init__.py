@@ -4,6 +4,7 @@ from app.models.question import Question, TestCase
 from app.models.test import Test, TestQuestion
 from app.models.attempt import StudentAttempt, StudentQuestion, StudentCode, Submission, SubmissionResult
 from app.models.violation import Violation
+from app.models.question_bank import QuestionBank
 
 __all__ = [
     "User",
@@ -11,4 +12,5 @@ __all__ = [
     "Test", "TestQuestion",
     "StudentAttempt", "StudentQuestion", "StudentCode", "Submission", "SubmissionResult",
     "Violation",
+    "QuestionBank",
 ]

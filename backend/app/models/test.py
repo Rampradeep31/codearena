@@ -1,5 +1,6 @@
 import enum
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import String, Text, DateTime, Integer, func, Boolean, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database.connection import Base
@@ -16,6 +17,11 @@ class Test(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=True)
+    year: Mapped[str] = mapped_column(String(50), nullable=False, default="Second Year")
+    question_bank_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("question_banks.id", ondelete="SET NULL"), nullable=True
+    )
+    randomize_questions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)

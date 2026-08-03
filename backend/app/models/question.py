@@ -1,5 +1,6 @@
 import enum
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import String, Text, Enum, DateTime, Integer, func, Boolean, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database.connection import Base
@@ -26,6 +27,9 @@ class Question(Base):
     sample_input: Mapped[str] = mapped_column(Text, nullable=True)
     sample_output: Mapped[str] = mapped_column(Text, nullable=True)
     explanation: Mapped[str] = mapped_column(Text, nullable=True)
+    question_bank_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("question_banks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
