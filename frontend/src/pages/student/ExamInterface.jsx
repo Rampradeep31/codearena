@@ -721,190 +721,199 @@ export default function ExamInterface() {
               }}
             />
           </div>
-
-          {/* LeetCode-Style Testcase & Test Result Panel */}
-          {runResult && (
-            <div className="border-t border-dark-700/60 bg-[#1e1e1e] flex flex-col max-h-[340px] overflow-hidden text-xs shadow-2xl">
-              {/* Top Bar: Tabs & Close */}
-              <div className="flex items-center justify-between px-4 py-1.5 border-b border-dark-700/50 bg-dark-900/90">
-                <div className="flex items-center gap-4">
-                  <button
-                    onClick={() => setResultTab('testcase')}
-                    className={`flex items-center gap-1.5 py-1 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-                      resultTab === 'testcase' ? 'border-brand-500 text-white font-semibold' : 'border-transparent text-dark-400 hover:text-dark-200'
-                    }`}
-                  >
-                    <HiOutlineCode className="w-3.5 h-3.5" />
-                    Testcase
-                  </button>
-                  <button
-                    onClick={() => setResultTab('result')}
-                    className={`flex items-center gap-1.5 py-1 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-                      resultTab === 'result' ? 'border-brand-500 text-white font-semibold' : 'border-transparent text-dark-400 hover:text-dark-200'
-                    }`}
-                  >
-                    <HiOutlineTerminal className="w-3.5 h-3.5 text-brand-400" />
-                    Test Result
-                  </button>
-                </div>
-                <button
-                  onClick={() => setRunResult(null)}
-                  className="text-dark-400 hover:text-white transition-colors p-1 cursor-pointer"
-                >
-                  <HiOutlineX className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Tab Content */}
-              <div className="p-4 overflow-y-auto flex-1 space-y-3">
-                {resultTab === 'testcase' ? (
-                  /* Testcase View */
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      {qData?.test_cases?.map((tc, idx) => (
-                        <button
-                          key={tc.id || idx}
-                          onClick={() => setActiveCaseIdx(idx)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                            activeCaseIdx === idx
-                              ? 'bg-dark-700 text-white font-semibold border border-dark-600 shadow'
-                              : 'bg-dark-800/60 text-dark-400 hover:text-dark-200 hover:bg-dark-800'
-                          }`}
-                        >
-                          Case {idx + 1}
-                        </button>
-                      ))}
-                    </div>
-                    {qData?.test_cases?.[activeCaseIdx] && (
-                      <div className="space-y-2">
-                        <div>
-                          <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
-                          <pre className="bg-dark-800/80 border border-dark-700/50 rounded-xl px-3 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                            {qData.test_cases[activeCaseIdx].input}
-                          </pre>
-                        </div>
-                        <div>
-                          <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected Output</p>
-                          <pre className="bg-dark-800/80 border border-dark-700/50 rounded-xl px-3 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
-                            {qData.test_cases[activeCaseIdx].expected_output}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  /* Test Result View (LeetCode Style) */
-                  <div className="space-y-3">
-                    {/* Compilation / Syntax Error */}
-                    {runResult.compilation_status === 'error' || runResult.compilation_error ? (
-                      <div>
-                        <h3 className="text-base font-bold text-red-500 flex items-center gap-1.5 mb-2">
-                          <HiOutlineXCircle className="w-5 h-5" /> Compilation Error
-                        </h3>
-                        <pre className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-36">
-                          {runResult.compilation_error || runResult.error || 'Compilation Error'}
-                        </pre>
-                      </div>
-                    ) : (
-                      <>
-                        {/* Verdict Title & Runtime */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <h3
-                              className={`text-lg font-extrabold tracking-tight ${
-                                runResult.passed === runResult.total && runResult.total > 0
-                                  ? 'text-emerald-500'
-                                  : 'text-red-500'
-                              }`}
-                            >
-                              {runResult.passed === runResult.total && runResult.total > 0
-                                ? 'Accepted'
-                                : 'Wrong Answer'}
-                            </h3>
-                          </div>
-                          {runResult.results?.[activeCaseIdx]?.execution_time !== undefined && (
-                            <span className="text-xs text-dark-400 font-mono font-medium">
-                              Runtime: {Math.round((runResult.results[activeCaseIdx].execution_time || 0) * 1000)} ms
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Horizontal Case Selectors: [✓ Case 1] [✕ Case 2] */}
-                        <div className="flex items-center gap-2">
-                          {(runResult.results?.length > 0 ? runResult.results : qData?.test_cases || [])?.map((res, idx) => {
-                            const isPassed = res.passed !== undefined ? res.passed : false;
-                            return (
-                              <button
-                                key={idx}
-                                onClick={() => setActiveCaseIdx(idx)}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                                  activeCaseIdx === idx
-                                    ? isPassed
-                                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold ring-1 ring-emerald-500/30'
-                                      : 'bg-red-500/20 text-red-400 border border-red-500/40 font-semibold ring-1 ring-red-500/30'
-                                    : isPassed
-                                    ? 'bg-emerald-500/10 text-emerald-500/80 hover:bg-emerald-500/20'
-                                    : 'bg-red-500/10 text-red-500/80 hover:bg-red-500/20'
-                                }`}
-                              >
-                                {isPassed ? (
-                                  <HiOutlineCheck className="w-3.5 h-3.5 text-emerald-500" />
-                                ) : (
-                                  <HiOutlineX className="w-3.5 h-3.5 text-red-500" />
-                                )}
-                                Case {idx + 1}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Input / Output / Expected Card for Selected Case */}
-                        {runResult.results?.[activeCaseIdx] ? (
-                          <div className="space-y-2.5">
-                            <div>
-                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
-                              <pre className="bg-dark-800/80 border border-dark-700/50 rounded-xl px-3 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                                {runResult.results[activeCaseIdx].input || qData?.test_cases?.[activeCaseIdx]?.input || 'None'}
-                              </pre>
-                            </div>
-                            <div>
-                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Output</p>
-                              <pre className="bg-dark-800/80 border border-dark-700/50 rounded-xl px-3 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                                {runResult.results[activeCaseIdx].actual_output || runResult.results[activeCaseIdx].stdout || ''}
-                              </pre>
-                            </div>
-                            <div>
-                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected</p>
-                              <pre className="bg-dark-800/80 border border-dark-700/50 rounded-xl px-3 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
-                                {runResult.results[activeCaseIdx].expected_output || qData?.test_cases?.[activeCaseIdx]?.expected_output || ''}
-                              </pre>
-                            </div>
-                          </div>
-                        ) : qData?.test_cases?.[activeCaseIdx] && (
-                          <div className="space-y-2.5">
-                            <div>
-                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
-                              <pre className="bg-dark-800/80 border border-dark-700/50 rounded-xl px-3 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                                {qData.test_cases[activeCaseIdx].input}
-                              </pre>
-                            </div>
-                            <div>
-                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected</p>
-                              <pre className="bg-dark-800/80 border border-dark-700/50 rounded-xl px-3 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
-                                {qData.test_cases[activeCaseIdx].expected_output}
-                              </pre>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {/* Floating Pop-Up Modal for Testcase & Test Result Execution Output */}
+      {runResult && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-[9999] animate-fade-in backdrop-blur-sm">
+          <div className="bg-dark-900 border border-dark-700/60 rounded-2xl max-w-xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-scale-up">
+            {/* Modal Header: Tabs & Close */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-dark-700/50 bg-dark-950/80">
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setResultTab('result')}
+                  className={`flex items-center gap-1.5 py-1 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                    resultTab === 'result' ? 'border-brand-500 text-white' : 'border-transparent text-dark-400 hover:text-dark-200'
+                  }`}
+                >
+                  <HiOutlineTerminal className="w-4 h-4 text-brand-400" />
+                  Test Result
+                </button>
+                <button
+                  onClick={() => setResultTab('testcase')}
+                  className={`flex items-center gap-1.5 py-1 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                    resultTab === 'testcase' ? 'border-brand-500 text-white' : 'border-transparent text-dark-400 hover:text-dark-200'
+                  }`}
+                >
+                  <HiOutlineCode className="w-4 h-4 text-dark-300" />
+                  Testcase
+                </button>
+              </div>
+              <button
+                onClick={() => setRunResult(null)}
+                className="w-7 h-7 rounded-lg bg-dark-800 hover:bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <HiOutlineX className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body: Testcase & Result View */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-4 text-xs">
+              {resultTab === 'testcase' ? (
+                /* Testcase View */
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    {qData?.test_cases?.map((tc, idx) => (
+                      <button
+                        key={tc.id || idx}
+                        onClick={() => setActiveCaseIdx(idx)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                          activeCaseIdx === idx
+                            ? 'bg-brand-500/20 text-brand-400 font-semibold border border-brand-500/40 shadow'
+                            : 'bg-dark-800 text-dark-400 hover:text-dark-200 hover:bg-dark-700'
+                        }`}
+                      >
+                        Case {idx + 1}
+                      </button>
+                    ))}
+                  </div>
+                  {qData?.test_cases?.[activeCaseIdx] && (
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
+                        <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
+                          {qData.test_cases[activeCaseIdx].input}
+                        </pre>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected Output</p>
+                        <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
+                          {qData.test_cases[activeCaseIdx].expected_output}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Test Result View (LeetCode Style Pop-up) */
+                <div className="space-y-4">
+                  {runResult.compilation_status === 'error' || runResult.compilation_error ? (
+                    <div>
+                      <h3 className="text-base font-bold text-red-500 flex items-center gap-2 mb-2">
+                        <HiOutlineXCircle className="w-5 h-5" /> Compilation Error
+                      </h3>
+                      <pre className="bg-red-500/10 border border-red-500/20 text-red-400 p-3.5 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-48">
+                        {runResult.compilation_error || runResult.error || 'Compilation Error'}
+                      </pre>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Verdict Header & Runtime */}
+                      <div className="flex items-center justify-between pb-1 border-b border-dark-800">
+                        <h3
+                          className={`text-xl font-extrabold tracking-tight ${
+                            runResult.passed === runResult.total && runResult.total > 0
+                              ? 'text-emerald-500'
+                              : 'text-red-500'
+                          }`}
+                        >
+                          {runResult.passed === runResult.total && runResult.total > 0
+                            ? 'Accepted'
+                            : 'Wrong Answer'}
+                        </h3>
+                        {runResult.results?.[activeCaseIdx]?.execution_time !== undefined && (
+                          <span className="text-xs text-dark-400 font-mono font-medium">
+                            Runtime: {Math.round((runResult.results[activeCaseIdx].execution_time || 0) * 1000)} ms
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Case Pill Buttons */}
+                      <div className="flex items-center gap-2">
+                        {(runResult.results?.length > 0 ? runResult.results : qData?.test_cases || [])?.map((res, idx) => {
+                          const isPassed = res.passed !== undefined ? res.passed : false;
+                          return (
+                            <button
+                              key={idx}
+                              onClick={() => setActiveCaseIdx(idx)}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                                activeCaseIdx === idx
+                                  ? isPassed
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold ring-1 ring-emerald-500/30'
+                                    : 'bg-red-500/20 text-red-400 border border-red-500/40 font-semibold ring-1 ring-red-500/30'
+                                  : isPassed
+                                  ? 'bg-emerald-500/10 text-emerald-500/80 hover:bg-emerald-500/20'
+                                  : 'bg-red-500/10 text-red-500/80 hover:bg-red-500/20'
+                              }`}
+                            >
+                              {isPassed ? (
+                                <HiOutlineCheck className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <HiOutlineX className="w-3.5 h-3.5 text-red-500" />
+                              )}
+                              Case {idx + 1}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Selected Case Inputs / Outputs */}
+                      {runResult.results?.[activeCaseIdx] ? (
+                        <div className="space-y-3">
+                          <div>
+                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
+                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
+                              {runResult.results[activeCaseIdx].input || qData?.test_cases?.[activeCaseIdx]?.input || 'None'}
+                            </pre>
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Output</p>
+                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
+                              {runResult.results[activeCaseIdx].actual_output || runResult.results[activeCaseIdx].stdout || ''}
+                            </pre>
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected</p>
+                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
+                              {runResult.results[activeCaseIdx].expected_output || qData?.test_cases?.[activeCaseIdx]?.expected_output || ''}
+                            </pre>
+                          </div>
+                        </div>
+                      ) : qData?.test_cases?.[activeCaseIdx] && (
+                        <div className="space-y-3">
+                          <div>
+                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
+                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
+                              {qData.test_cases[activeCaseIdx].input}
+                            </pre>
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected</p>
+                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
+                              {qData.test_cases[activeCaseIdx].expected_output}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer: Action Buttons */}
+            <div className="px-5 py-3 border-t border-dark-700/50 bg-dark-950/80 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setRunResult(null)}
+                className="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Close Window
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bottom: Question Navigation */}
       <div className="bg-dark-900 border-t border-dark-700/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
