@@ -1040,18 +1040,27 @@ export const adminAPI = {
   // ─── Questions CRUD ─────────────────────────────────────────
   getQuestions: async (params) => {
     try {
-      let query = supabase.from('questions').select('*, test_cases(*)');
+      let data = null;
+      const res = await supabase.from('questions').select('*, test_cases(*)');
+      if (res.error) {
+        console.warn('getQuestions embedded select error, falling back to simple select:', res.error);
+        const simpleRes = await supabase.from('questions').select('*');
+        data = simpleRes.data || [];
+      } else {
+        data = res.data || [];
+      }
+
       if (params?.search) {
-        query = query.or(`title.ilike.%${params.search}%,topic.ilike.%${params.search}%`);
+        const s = params.search.toLowerCase();
+        data = data.filter(q => (q.title && q.title.toLowerCase().includes(s)) || (q.topic && q.topic.toLowerCase().includes(s)));
       }
       if (params?.difficulty) {
-        query = query.eq('difficulty', params.difficulty);
+        data = data.filter(q => q.difficulty === params.difficulty);
       }
-      const { data } = await query.order('created_at', { ascending: false });
       
       // Map question_bank_id (default to Question Bank 1 if not explicitly set)
       const localMappings = getLocalQuestionMappings();
-      const mapped = (data || []).map(q => {
+      const mapped = data.map(q => {
         let qbId = q.question_bank_id;
         if (qbId === undefined || qbId === null || !qbId) {
           qbId = localMappings[q.id] || 1;
@@ -1060,11 +1069,13 @@ export const adminAPI = {
       });
 
       if (params?.question_bank_id) {
-        return { data: mapped.filter(q => q.question_bank_id === parseInt(params.question_bank_id)) };
+        const targetBankId = parseInt(params.question_bank_id);
+        const filtered = mapped.filter(q => q.question_bank_id === targetBankId || targetBankId === 1);
+        return { data: filtered };
       }
       return { data: mapped };
     } catch (e) {
-      console.warn('getQuestions error:', e);
+      console.error('getQuestions error:', e);
       return { data: [] };
     }
   },
