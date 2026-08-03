@@ -25,11 +25,15 @@ CREATE TABLE IF NOT EXISTS public.questions (
     topic TEXT DEFAULT 'General',
     input_format TEXT,
     output_format TEXT,
+    constraints TEXT,
     sample_input TEXT,
     sample_output TEXT,
     explanation TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure constraints column exists on existing tables
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS constraints TEXT;
 
 -- 3. Create Test Cases Table
 CREATE TABLE IF NOT EXISTS public.test_cases (
