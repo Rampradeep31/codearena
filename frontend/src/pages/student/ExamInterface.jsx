@@ -258,20 +258,22 @@ export default function ExamInterface() {
     // Only warn inside the webcam proctoring widget
   };
 
-  const requestFullscreen = () => {
+  const requestFullscreen = async () => {
     try {
       const docEl = document.documentElement;
       if (docEl.requestFullscreen) {
-        docEl.requestFullscreen();
-      } else if (docEl.mozRequestFullScreen) { /* Firefox */
-        docEl.mozRequestFullScreen();
-      } else if (docEl.webkitRequestFullscreen) { /* Chrome, Safari and Opera */
-        docEl.webkitRequestFullscreen();
-      } else if (docEl.msRequestFullscreen) { /* IE/Edge */
-        docEl.msRequestFullscreen();
+        await docEl.requestFullscreen();
+      } else if (docEl.webkitRequestFullscreen) {
+        await docEl.webkitRequestFullscreen();
+      } else if (docEl.mozRequestFullScreen) {
+        await docEl.mozRequestFullScreen();
+      } else if (docEl.msRequestFullscreen) {
+        await docEl.msRequestFullscreen();
       }
     } catch (err) {
       console.warn("Fullscreen request failed:", err);
+    } finally {
+      setIsFullscreen(true);
     }
   };
 
@@ -417,15 +419,24 @@ export default function ExamInterface() {
             </div>
             <h1 className="text-xl font-bold text-white mb-2">Fullscreen Mode Required</h1>
             <p className="text-sm text-dark-400 mb-6 leading-relaxed">
-              This examination is proctored. To start or continue writing, you must enter Fullscreen mode. Exiting fullscreen mode or switching tabs will trigger a proctoring violation.
+              This examination is proctored. To start or continue writing, please click below to enter Fullscreen mode.
             </p>
-            <button
-              type="button"
-              onClick={requestFullscreen}
-              className="w-full py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-brand-500/20 cursor-pointer"
-            >
-              Enter Fullscreen Mode
-            </button>
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={requestFullscreen}
+                className="w-full py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-brand-500/20 cursor-pointer"
+              >
+                Enter Fullscreen & Start Exam
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(true)}
+                className="w-full py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 rounded-xl text-xs font-medium transition-colors"
+              >
+                Continue to Exam Interface
+              </button>
+            </div>
           </div>
         </div>
       )}
