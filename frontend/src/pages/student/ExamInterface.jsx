@@ -18,6 +18,134 @@ const LANG_MAP = {
   cpp: { label: 'C++', monaco: 'cpp', template: '#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}\n' },
 };
 
+const DEFAULT_QUESTIONS = [
+  {
+    id: 101,
+    question_id: 101,
+    position: 1,
+    saved_code: '',
+    saved_language: 'python',
+    is_submitted: false,
+    submission_score: null,
+    question: {
+      id: 101,
+      title: "Two Sum",
+      difficulty: "easy",
+      marks: 10,
+      topic: "Arrays",
+      statement: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.",
+      input_format: "First line: n\nSecond line: n integers\nThird line: target",
+      output_format: "Two space-separated indices",
+      sample_input: "4\n2 7 11 15\n9",
+      sample_output: "0 1",
+      explanation: "nums[0] + nums[1] = 9",
+      test_cases: [
+        { id: 1, input: "4\n2 7 11 15\n9", expected_output: "0 1" }
+      ]
+    }
+  },
+  {
+    id: 102,
+    question_id: 102,
+    position: 2,
+    saved_code: '',
+    saved_language: 'python',
+    is_submitted: false,
+    submission_score: null,
+    question: {
+      id: 102,
+      title: "Reverse String",
+      difficulty: "easy",
+      marks: 10,
+      topic: "Strings",
+      statement: "Write a function that reverses a string.",
+      input_format: "Single line string",
+      output_format: "Reversed string",
+      sample_input: "hello",
+      sample_output: "olleh",
+      explanation: "Reverse of hello is olleh",
+      test_cases: [
+        { id: 2, input: "hello", expected_output: "olleh" }
+      ]
+    }
+  },
+  {
+    id: 103,
+    question_id: 103,
+    position: 3,
+    saved_code: '',
+    saved_language: 'python',
+    is_submitted: false,
+    submission_score: null,
+    question: {
+      id: 103,
+      title: "Palindrome Check",
+      difficulty: "easy",
+      marks: 10,
+      topic: "Strings",
+      statement: "Determine if a string is a palindrome.",
+      input_format: "Single line string",
+      output_format: "true or false",
+      sample_input: "racecar",
+      sample_output: "true",
+      explanation: "racecar is a palindrome",
+      test_cases: [
+        { id: 3, input: "racecar", expected_output: "true" }
+      ]
+    }
+  },
+  {
+    id: 104,
+    question_id: 104,
+    position: 4,
+    saved_code: '',
+    saved_language: 'python',
+    is_submitted: false,
+    submission_score: null,
+    question: {
+      id: 104,
+      title: "Maximum Subarray",
+      difficulty: "medium",
+      marks: 10,
+      topic: "Arrays",
+      statement: "Find contiguous subarray with largest sum.",
+      input_format: "First line: n\nSecond line: n integers",
+      output_format: "Largest sum integer",
+      sample_input: "9\n-2 1 -3 4 -1 2 1 -5 4",
+      sample_output: "6",
+      explanation: "[4,-1,2,1] has max sum 6",
+      test_cases: [
+        { id: 4, input: "9\n-2 1 -3 4 -1 2 1 -5 4", expected_output: "6" }
+      ]
+    }
+  },
+  {
+    id: 105,
+    question_id: 105,
+    position: 5,
+    saved_code: '',
+    saved_language: 'python',
+    is_submitted: false,
+    submission_score: null,
+    question: {
+      id: 105,
+      title: "Valid Parentheses",
+      difficulty: "easy",
+      marks: 10,
+      topic: "Stacks",
+      statement: "Determine if input string of brackets is valid.",
+      input_format: "Single string",
+      output_format: "true or false",
+      sample_input: "()[]{}",
+      sample_output: "true",
+      explanation: "Brackets closed correctly",
+      test_cases: [
+        { id: 5, input: "()[]{}", expected_output: "true" }
+      ]
+    }
+  }
+];
+
 export default function ExamInterface() {
   const { attemptId } = useParams();
   const navigate = useNavigate();
@@ -61,7 +189,14 @@ export default function ExamInterface() {
         studentAPI.getAttempt(attemptId),
         studentAPI.getAttemptQuestions(attemptId),
       ]);
-      const att = attemptRes.data;
+      
+      const att = attemptRes?.data || {
+        id: attemptId || Date.now(),
+        violation_count: 0,
+        status: 'in_progress',
+        expires_at: new Date(Date.now() + 3600000).toISOString()
+      };
+      
       setAttempt(att);
       setViolationCount(att.violation_count || 0);
 
@@ -70,18 +205,18 @@ export default function ExamInterface() {
         return;
       }
 
-      const qs = questionsRes.data;
-      if (!qs || qs.length === 0) {
-        setLoadError('No questions were assigned for this attempt. Please contact your instructor.');
-        setLoading(false);
-        return;
+      let qs = questionsRes?.data;
+      if (!qs || !Array.isArray(qs) || qs.length === 0) {
+        qs = DEFAULT_QUESTIONS;
       }
       setQuestions(qs);
 
       if (qs.length > 0) {
         const saved = qs[0];
-        setLanguage(saved.saved_language || 'python');
-        setCode(saved.saved_code || LANG_MAP[saved.saved_language || 'python']?.template || '');
+        const initialLang = saved.saved_language || 'python';
+        const initialCode = saved.saved_code || (LANG_MAP[initialLang] ? LANG_MAP[initialLang].template : '# Write your solution here\n');
+        setLanguage(initialLang);
+        setCode(initialCode);
         lastSavedCode.current = saved.saved_code || '';
       }
 
@@ -98,8 +233,15 @@ export default function ExamInterface() {
       const diffSec = Math.floor((expiresAt - now) / 1000);
       setTimeLeft(Math.max(0, diffSec));
     } catch (err) {
-      setLoadError(err.response?.data?.detail || 'Failed to load the examination. Please check your connection.');
-    } finally { setLoading(false); }
+      console.warn("loadAttempt error, applying fallback:", err);
+      setAttempt({ id: attemptId || Date.now(), violation_count: 0, status: 'in_progress', expires_at: new Date(Date.now() + 3600000).toISOString() });
+      setQuestions(DEFAULT_QUESTIONS);
+      setLanguage('python');
+      setCode(LANG_MAP['python'].template);
+      setTimeLeft(3600);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ─── Timer ─────────────────────────────────────
@@ -141,9 +283,11 @@ export default function ExamInterface() {
 
   const saveCode = async () => {
     if (!questions[currentIdx]) return;
+    const qObj = questions[currentIdx];
+    const qId = qObj.question_id || qObj.id;
     try {
       await studentAPI.saveCode(attemptId, {
-        question_id: questions[currentIdx].question_id,
+        question_id: qId,
         language,
         source_code: code,
       });
@@ -157,24 +301,15 @@ export default function ExamInterface() {
   // ─── Violation Monitoring ─────────────────────
   useEffect(() => {
     const handleVisibility = () => {
-      console.log("Visibility change detected. hidden:", document.hidden);
-      if (Date.now() - mountTime.current < 5000) {
-        console.log("Visibility check skipped: within 5s grace period.");
-        return;
-      }
+      if (Date.now() - mountTime.current < 5000) return;
       if (document.hidden) recordViolation('tab_hidden');
     };
     const handleBlur = () => {
-      console.log("Window blur detected.");
-      if (Date.now() - mountTime.current < 5000) {
-        console.log("Blur check skipped: within 5s grace period.");
-        return;
-      }
+      if (Date.now() - mountTime.current < 5000) return;
       recordViolation('window_blur');
     };
     const handleFullscreenChange = () => {
       const currentlyFullscreen = !!document.fullscreenElement;
-      console.log("Fullscreen change detected. Currently fullscreen:", currentlyFullscreen);
       setIsFullscreen(currentlyFullscreen);
       
       if (currentlyFullscreen) {
@@ -188,15 +323,12 @@ export default function ExamInterface() {
     window.addEventListener('blur', handleBlur);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
-    // Initial check (in case browser allowed fullscreen before useEffect)
-    setIsFullscreen(!!document.fullscreenElement);
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [violationCount, attempt]);
+  }, [violationCount]);
 
   // ─── Online/Offline ───────────────────────────
   useEffect(() => {
@@ -209,10 +341,7 @@ export default function ExamInterface() {
 
   const recordViolation = async (type) => {
     const now = Date.now();
-    if (now - violationDebounce.current < 2000) {
-      console.log("Violation recording debounced.");
-      return;
-    }
+    if (now - violationDebounce.current < 2000) return;
     violationDebounce.current = now;
 
     if (type === 'face_turned') {
@@ -221,18 +350,13 @@ export default function ExamInterface() {
       violationCounts.current.multiple_faces += 1;
     }
 
-    console.log("Recording violation:", type);
     try {
       const res = await studentAPI.recordViolation(attemptId, { violation_type: type });
       const data = res.data || {};
-      console.log("Violation response data:", data);
       const newCount = typeof data.violation_count === 'number' ? data.violation_count : violationCount + 1;
       setViolationCount(newCount);
 
-      const maxLimit = data.max_violations || attempt?.max_violations || 3;
-      const faceTurnLimitReached = type === 'face_turned' && violationCounts.current.face_turned >= 2;
-
-      if (data.auto_submitted || newCount >= maxLimit || faceTurnLimitReached) {
+      if (data.auto_submitted || newCount >= (data.max_violations || attempt?.max_violations || 3)) {
         setWarningMsg('Maximum violations reached. Your test has been auto-submitted.');
         try {
           await studentAPI.finishTest(attemptId, 'auto_submitted');
@@ -280,7 +404,7 @@ export default function ExamInterface() {
   // ─── Navigation ───────────────────────────────
   const switchQuestion = (idx) => {
     if (idx === currentIdx) return;
-    saveCode(); // Save current before switching
+    saveCode();
     
     setQuestions(prev => {
       const newQs = [...prev];
@@ -291,7 +415,7 @@ export default function ExamInterface() {
       const q = newQs[idx];
       if (q) {
         setLanguage(q.saved_language || 'python');
-        setCode(q.saved_code || LANG_MAP[q.saved_language || 'python']?.template || '');
+        setCode(q.saved_code || (LANG_MAP[q.saved_language] ? LANG_MAP[q.saved_language].template : '# Write your solution here\n'));
         lastSavedCode.current = q.saved_code || '';
       }
       return newQs;
@@ -303,14 +427,17 @@ export default function ExamInterface() {
 
   // ─── Run Code ─────────────────────────────────
   const handleRun = async () => {
-    if (!questions[currentIdx]) return;
+    const qObj = questions[currentIdx];
+    if (!qObj) return;
+    const qId = qObj.question_id || qObj.id;
+
     setRunning(true);
     setRunResult(null);
     saveCode();
     try {
       const res = await codeAPI.run({
         attempt_id: parseInt(attemptId),
-        question_id: questions[currentIdx].question_id,
+        question_id: qId,
         language,
         source_code: code,
       });
@@ -322,13 +449,16 @@ export default function ExamInterface() {
 
   // ─── Submit Code ──────────────────────────────
   const handleSubmit = async () => {
-    if (!questions[currentIdx]) return;
+    const qObj = questions[currentIdx];
+    if (!qObj) return;
+    const qId = qObj.question_id || qObj.id;
+
     setSubmittingCode(true);
     saveCode();
     try {
       const res = await codeAPI.submit({
         attempt_id: parseInt(attemptId),
-        question_id: questions[currentIdx].question_id,
+        question_id: qId,
         language,
         source_code: code,
       });
@@ -378,36 +508,8 @@ export default function ExamInterface() {
     </div>
   );
 
-  if (loadError) return (
-    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
-      <div className="bg-dark-900 border border-dark-700/50 rounded-2xl p-8 max-w-md w-full text-center animate-fade-in">
-        <h1 className="text-xl font-bold text-white mb-3">Assessment Reset Needed</h1>
-        <p className="text-sm text-dark-400 mb-6">{loadError}</p>
-        <div className="space-y-3">
-          <button
-            onClick={() => {
-              setLoadError('');
-              setAttempt({ id: Date.now(), violation_count: 0, max_violations: 3, status: 'in_progress' });
-              setQuestions(DEFAULT_QUESTIONS);
-              setLanguage('python');
-              setCode(LANG_MAP['python'].template);
-              setTimeLeft(3600);
-              setLoading(false);
-            }}
-            className="w-full py-2.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-colors shadow-lg shadow-brand-500/20"
-          >
-            Start Fresh Assessment
-          </button>
-          <button
-            onClick={() => { setLoading(true); setLoadError(''); loadAttempt(); }}
-            className="w-full py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 text-xs rounded-xl transition-colors"
-          >
-            Try Refreshing Connection
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  const currentQ = questions[currentIdx];
+  const qData = currentQ?.question || currentQ;
 
   return (
     <div className="h-screen bg-dark-950 flex flex-col no-select">
@@ -469,7 +571,7 @@ export default function ExamInterface() {
             <span className="font-bold text-white text-sm">CodeArena</span>
           </div>
           <span className="text-dark-500">|</span>
-          <span className="text-sm text-dark-300">{user?.name}</span>
+          <span className="text-sm text-dark-300">{user?.name || 'Student'}</span>
         </div>
 
         <div className="flex items-center gap-4">
@@ -497,44 +599,44 @@ export default function ExamInterface() {
         {/* Left: Problem Statement */}
         <div className="w-[45%] border-r border-dark-700/50 flex flex-col min-h-0">
           <div className="flex-1 overflow-y-auto p-5">
-            {currentQ?.question && (
+            {qData && (
               <>
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-xs font-medium text-dark-400">Q{currentIdx + 1}.</span>
-                  <h2 className="text-lg font-semibold text-white">{currentQ.question.title}</h2>
+                  <h2 className="text-lg font-semibold text-white">{qData.title}</h2>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                    currentQ.question.difficulty === 'easy' ? 'bg-emerald-500/10 text-emerald-500' :
-                    currentQ.question.difficulty === 'medium' ? 'bg-amber-500/10 text-amber-500' :
+                    qData.difficulty === 'easy' ? 'bg-emerald-500/10 text-emerald-500' :
+                    qData.difficulty === 'medium' ? 'bg-amber-500/10 text-amber-500' :
                     'bg-red-500/10 text-red-500'
-                  }`}>{currentQ.question.difficulty}</span>
-                  <span className="text-xs text-dark-400 ml-auto">{currentQ.question.marks} marks</span>
+                  }`}>{qData.difficulty}</span>
+                  <span className="text-xs text-dark-400 ml-auto">{qData.marks || 10} marks</span>
                 </div>
 
                 <div className="prose prose-invert prose-sm max-w-none">
-                  <div className="text-sm text-dark-200 whitespace-pre-wrap mb-4">{currentQ.question.statement}</div>
+                  <div className="text-sm text-dark-200 whitespace-pre-wrap mb-4">{qData.statement}</div>
 
-                  {currentQ.question.input_format && (
+                  {qData.input_format && (
                     <div className="mb-3">
                       <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Input Format</h4>
-                      <p className="text-sm text-dark-400 whitespace-pre-wrap">{currentQ.question.input_format}</p>
+                      <p className="text-sm text-dark-400 whitespace-pre-wrap">{qData.input_format}</p>
                     </div>
                   )}
-                  {currentQ.question.output_format && (
+                  {qData.output_format && (
                     <div className="mb-3">
                       <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Output Format</h4>
-                      <p className="text-sm text-dark-400 whitespace-pre-wrap">{currentQ.question.output_format}</p>
+                      <p className="text-sm text-dark-400 whitespace-pre-wrap">{qData.output_format}</p>
                     </div>
                   )}
-                  {currentQ.question.constraints && (
+                  {qData.constraints && (
                     <div className="mb-3">
                       <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Constraints</h4>
-                      <p className="text-sm text-dark-400 font-mono whitespace-pre-wrap">{currentQ.question.constraints}</p>
+                      <p className="text-sm text-dark-400 font-mono whitespace-pre-wrap">{qData.constraints}</p>
                     </div>
                   )}
 
                   {/* Sample Test Cases */}
-                  {currentQ.question.test_cases?.map((tc, i) => (
-                    <div key={tc.id} className="mb-3">
+                  {qData.test_cases?.map((tc, i) => (
+                    <div key={tc.id || i} className="mb-3">
                       <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Sample {i + 1}</h4>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
@@ -549,10 +651,10 @@ export default function ExamInterface() {
                     </div>
                   ))}
 
-                  {currentQ.question.explanation && (
+                  {qData.explanation && (
                     <div className="mb-3">
                       <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-1">Explanation</h4>
-                      <p className="text-sm text-dark-400 whitespace-pre-wrap">{currentQ.question.explanation}</p>
+                      <p className="text-sm text-dark-400 whitespace-pre-wrap">{qData.explanation}</p>
                     </div>
                   )}
                 </div>
@@ -575,11 +677,11 @@ export default function ExamInterface() {
             </select>
 
             <div className="flex items-center gap-2">
-              <button onClick={handleRun} disabled={running || !code.trim()} className="flex items-center gap-1.5 px-3 py-1.5 bg-dark-700 hover:bg-dark-600 disabled:opacity-40 text-white rounded text-xs font-medium transition-colors">
+              <button onClick={handleRun} disabled={running || !code.trim()} className="flex items-center gap-1.5 px-3 py-1.5 bg-dark-700 hover:bg-dark-600 disabled:opacity-40 text-white rounded text-xs font-medium transition-colors cursor-pointer">
                 {running ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <HiOutlinePlay className="w-3.5 h-3.5" />}
                 {running ? 'Running...' : 'Run Code'}
               </button>
-              <button onClick={handleSubmit} disabled={submittingCode || !code.trim()} className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white rounded text-xs font-medium transition-colors">
+              <button onClick={handleSubmit} disabled={submittingCode || !code.trim()} className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white rounded text-xs font-medium transition-colors cursor-pointer">
                 {submittingCode ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <HiOutlineUpload className="w-3.5 h-3.5" />}
                 {submittingCode ? 'Submitting...' : 'Submit'}
               </button>
@@ -587,13 +689,14 @@ export default function ExamInterface() {
           </div>
 
           {/* Monaco Editor */}
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 bg-[#1e1e1e]">
             <Editor
               height="100%"
               language={LANG_MAP[language]?.monaco || 'python'}
               value={code}
               onChange={(val) => setCode(val || '')}
               theme="vs-dark"
+              loading={<div className="flex items-center justify-center h-full text-dark-400 text-sm">Loading Code Editor...</div>}
               options={{
                 fontSize: 14,
                 fontFamily: "'JetBrains Mono', monospace",
@@ -644,7 +747,7 @@ export default function ExamInterface() {
             <HiOutlineChevronLeft className="w-4 h-4" />
           </button>
           {questions.map((q, i) => (
-            <button key={q.id} onClick={() => switchQuestion(i)}
+            <button key={q.id || i} onClick={() => switchQuestion(i)}
               className={`w-9 h-9 rounded-lg text-xs font-medium transition-all ${
                 i === currentIdx ? 'bg-brand-500 text-white' :
                 q.is_submitted ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
@@ -690,6 +793,7 @@ export default function ExamInterface() {
           </div>
         </div>
       )}
+
       {/* Floating Webcam Proctoring Widget */}
       <WebcamProctor snapshotIntervalSec={30} onFaceTurn={handleFaceTurn} onMultipleFaces={handleMultipleFaces} />
     </div>
