@@ -100,27 +100,30 @@ def _transpile_to_python(source_code: str, language: str) -> str:
         line_sub = re.sub(r"\s*<<\s*(?:std::)?endl", "", line_sub)
         line_sub = re.sub(r"(?:std::)?cout\s*<<\s*(.*?)\s*;\s*$", r"print(\1)", line_sub)
 
-        # C printf
+        # System.out.printf and printf
         if "printf" in line_sub:
+            line_sub = re.sub(r"System\.out\.printf\s*\(", "printf(", line_sub)
             m_args = re.search(r"printf\s*\(\s*\"(.*?)\"\s*,\s*(.*?)\)\s*;", line_sub)
             m_noargs = re.search(r"printf\s*\(\s*\"(.*?)\"\s*\)\s*;", line_sub)
             if m_args:
                 fmt_str, args_str = m_args.group(1), m_args.group(2)
+                fmt_str = fmt_str.replace("%n", "\\n")
                 has_newline = False
                 if fmt_str.endswith(r"\n") or fmt_str.endswith("\n"):
                     has_newline = True
                     fmt_str = fmt_str[:-2] if fmt_str.endswith(r"\n") else fmt_str[:-1]
                 end_clause = "" if has_newline else ", end=''"
-                fmt_py = re.sub(r"%[dfsg]", "{}", fmt_str)
+                fmt_py = re.sub(r"%[-+ 0]*\d*(?:\.\d+)?[a-zA-Z%]", "{}", fmt_str)
                 line_sub = f"print(\"{fmt_py}\".format({args_str}){end_clause})"
             elif m_noargs:
-                fmt_str = m_noargs.group(1)
+                fmt_str = m_noargs.group(1).replace("%n", "\\n")
                 has_newline = False
                 if fmt_str.endswith(r"\n") or fmt_str.endswith("\n"):
                     has_newline = True
                     fmt_str = fmt_str[:-2] if fmt_str.endswith(r"\n") else fmt_str[:-1]
                 end_clause = "" if has_newline else ", end=''"
-                line_sub = f"print(\"{fmt_str}\"{end_clause})"
+                fmt_py = re.sub(r"%[-+ 0]*\d*(?:\.\d+)?[a-zA-Z%]", "{}", fmt_str)
+                line_sub = f"print(\"{fmt_py}\"{end_clause})"
 
         # Scanner / cin / scanf
         line_sub = re.sub(r"Scanner\s+\w+\s*=\s*new\s+Scanner\s*\(.*?\)\s*;", "", line_sub)
