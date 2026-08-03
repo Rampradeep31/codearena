@@ -64,13 +64,7 @@ export default function QuestionEditor() {
     setSaving(true);
     try {
       if (isEdit) {
-        await adminAPI.updateQuestion(id, form);
-        // Handle test cases separately for edit
-        const existing = testCases.filter(tc => tc.id);
-        const newTCs = testCases.filter(tc => !tc.id);
-        for (const tc of newTCs) {
-          await adminAPI.addTestCase(id, tc);
-        }
+        await adminAPI.updateQuestion(id, { ...form, test_cases: testCases });
         toast.success('Question updated');
       } else {
         await adminAPI.createQuestion({ ...form, test_cases: testCases });
@@ -82,7 +76,8 @@ export default function QuestionEditor() {
         navigate('/admin/questions');
       }
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error saving question');
+      console.error('Error saving question:', err);
+      toast.error(err.message || err.response?.data?.detail || 'Error saving question');
     } finally { setSaving(false); }
   };
 

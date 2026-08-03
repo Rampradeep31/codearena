@@ -1092,18 +1092,29 @@ export const adminAPI = {
 
   createQuestion: async (data) => {
     const { test_cases, question_bank_id, ...questionData } = data;
+    delete questionData.id;
+    delete questionData.created_at;
+
     const { data: question, error } = await supabase.from('questions').insert(questionData).select().single();
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase createQuestion error:', error);
+      throw error;
+    }
     
     // Save mapping locally
     if (question_bank_id) {
       const mappings = getLocalQuestionMappings();
-      mappings[question.id] = question_bank_id;
+      mappings[question.id] = parseInt(question_bank_id);
       saveLocalQuestionMappings(mappings);
     }
 
     if (test_cases && test_cases.length > 0) {
-      const tcData = test_cases.map(tc => ({ ...tc, question_id: question.id }));
+      const tcData = test_cases.map(({ id: _, ...tc }) => ({
+        question_id: question.id,
+        input: tc.input || '',
+        expected_output: tc.expected_output || '',
+        is_hidden: !!tc.is_hidden
+      }));
       await supabase.from('test_cases').insert(tcData);
     }
     return { data: { ...question, question_bank_id } };
@@ -1111,17 +1122,49 @@ export const adminAPI = {
 
   updateQuestion: async (id, data) => {
     const { test_cases, question_bank_id, ...questionData } = data;
-    const { data: question, error } = await supabase.from('questions').update(questionData).eq('id', id).select().single();
-    if (error) throw error;
+    const numericId = parseInt(id);
+
+    delete questionData.id;
+    delete questionData.created_at;
+
+    const { data: question, error } = await supabase
+      .from('questions')
+      .update(questionData)
+      .eq('id', numericId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase updateQuestion error:', error);
+      throw error;
+    }
 
     // Save mapping locally
     const mappings = getLocalQuestionMappings();
     if (question_bank_id) {
-      mappings[id] = question_bank_id;
+      mappings[numericId] = parseInt(question_bank_id);
     } else {
-      delete mappings[id];
+      delete mappings[numericId];
     }
     saveLocalQuestionMappings(mappings);
+
+    // Sync test cases in Supabase (replace with updated set)
+    if (test_cases && Array.isArray(test_cases)) {
+      try {
+        await supabase.from('test_cases').delete().eq('question_id', numericId);
+        if (test_cases.length > 0) {
+          const tcData = test_cases.map(({ id: _, ...tc }) => ({
+            question_id: numericId,
+            input: tc.input || '',
+            expected_output: tc.expected_output || '',
+            is_hidden: !!tc.is_hidden
+          }));
+          await supabase.from('test_cases').insert(tcData);
+        }
+      } catch (tcError) {
+        console.warn('Error updating test_cases for question:', tcError);
+      }
+    }
 
     return { data: { ...question, question_bank_id } };
   },
