@@ -83,7 +83,7 @@ def extract_java_class_name(source_code: str) -> str:
     return "Main"
 
 
-class LocalExecutor:
+class LocalCodeExecutor:
     """Local compiler and code execution engine for Java, Python, C, and C++."""
 
     @staticmethod
@@ -450,3 +450,7 @@ class LocalExecutor:
             expected_output=expected_output,
             is_compilation_failure=False,
         )
+
+
+LocalExecutor = LocalCodeExecutor
+
