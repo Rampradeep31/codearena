@@ -658,27 +658,43 @@ const saveLocalQuestionMappings = (mappings) => {
   localStorage.setItem('codearena_question_mappings', JSON.stringify(mappings));
 };
 
+const ensureTestCases = (q) => {
+  if (q && q.test_cases && Array.isArray(q.test_cases) && q.test_cases.length > 0) {
+    return q.test_cases;
+  }
+  const tcs = [];
+  if (q && (q.sample_input !== undefined && q.sample_input !== null && q.sample_output !== undefined && q.sample_output !== null)) {
+    tcs.push({
+      id: `tc_${q.id}_1`,
+      input: String(q.sample_input),
+      expected_output: String(q.sample_output),
+      is_hidden: false
+    });
+  }
+  return tcs;
+};
+
 const DEFAULT_ALL_QUESTIONS = [
-  { id: 101, title: 'Two Sum', statement: 'Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers\nThird line: target', output_format: 'Two space-separated indices', sample_input: '4\n2 7 11 15\n9', sample_output: '0 1', explanation: 'nums[0] + nums[1] = 9', question_bank_id: 1 },
-  { id: 102, title: 'Reverse String', statement: 'Write a function that reverses a string.', difficulty: 'easy', marks: 50, topic: 'Strings', input_format: 'Single line string', output_format: 'Reversed string', sample_input: 'hello', sample_output: 'olleh', explanation: 'Reverse of hello is olleh', question_bank_id: 1 },
-  { id: 103, title: 'Palindrome Check', statement: 'Determine if a string is a palindrome.', difficulty: 'easy', marks: 50, topic: 'Strings', input_format: 'Single line string', output_format: 'true or false', sample_input: 'racecar', sample_output: 'true', explanation: 'racecar is a palindrome', question_bank_id: 1 },
-  { id: 104, title: 'Maximum Subarray', statement: 'Find contiguous subarray with largest sum.', difficulty: 'medium', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Largest sum integer', sample_input: '9\n-2 1 -3 4 -1 2 1 -5 4', sample_output: '6', explanation: '[4,-1,2,1] has max sum 6', question_bank_id: 1 },
-  { id: 105, title: 'Valid Parentheses', statement: 'Determine if input string of brackets is valid.', difficulty: 'easy', marks: 50, topic: 'Stacks', input_format: 'Single string', output_format: 'true or false', sample_input: '()[]{}', sample_output: 'true', explanation: 'Brackets closed correctly', question_bank_id: 1 },
-  { id: 106, title: 'Convert Temperature', statement: 'Convert Celsius to Kelvin and Fahrenheit.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single float celsius', output_format: 'Two lines: Kelvin\nFahrenheit', sample_input: '36.50', sample_output: '309.65\n97.70', explanation: 'Celsius converted to Kelvin and Fahrenheit', question_bank_id: 1 },
-  { id: 107, title: 'Power of Three', statement: 'Given an integer n, return true if it is a power of three.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single integer n', output_format: 'true or false', sample_input: '27', sample_output: 'true', explanation: '27 is 3^3', question_bank_id: 1 },
-  { id: 108, title: 'Sqrt(x)', statement: 'Compute and return the square root of x rounded down.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single integer x', output_format: 'Square root integer', sample_input: '8', sample_output: '2', explanation: 'sqrt(8) = 2.828 -> 2', question_bank_id: 1 },
-  { id: 109, title: 'Remove Duplicates from Sorted Array', statement: 'Remove duplicates in-place from sorted array.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Space separated unique elements', sample_input: '3\n1 1 2', sample_output: '1 2', explanation: 'Unique elements are 1 and 2', question_bank_id: 1 },
-  { id: 110, title: 'Roman to Integer', statement: 'Convert Roman numeral string to integer.', difficulty: 'easy', marks: 50, topic: 'Strings', input_format: 'Single Roman string', output_format: 'Integer', sample_input: 'III', sample_output: '3', explanation: 'III = 3', question_bank_id: 1 },
-  { id: 111, title: 'Palindrome Number', statement: 'Determine whether an integer is a palindrome.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single integer', output_format: 'true or false', sample_input: '121', sample_output: 'true', explanation: '121 reads same backward', question_bank_id: 1 },
-  { id: 112, title: 'Sort Array By Parity', statement: 'Move all even integers to beginning of array followed by odd.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Space separated sorted elements', sample_input: '4\n3 1 2 4', sample_output: '2 4 3 1', explanation: 'Even numbers first', question_bank_id: 1 },
-  { id: 113, title: 'Shuffle the Array', statement: 'Given array nums consisting of 2n elements, return array in form [x1,y1,x2,y2...].', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: 2n integers', output_format: 'Shuffled elements', sample_input: '3\n2 5 1 3 4 7', sample_output: '2 3 5 4 1 7', explanation: 'Pairs (x_i, y_i) interleaved', question_bank_id: 1 },
-  { id: 114, title: 'Single Element in a Sorted Array', statement: 'Every element appears twice except for one. Find single element.', difficulty: 'medium', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Single element integer', sample_input: '9\n1 1 2 3 3 4 4 8 8', sample_output: '2', explanation: '2 appears once', question_bank_id: 1 },
-  { id: 115, title: 'Build Array from Permutation', statement: 'Build array ans where ans[i] = nums[nums[i]].', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Permuted elements', sample_input: '6\n0 2 1 5 3 4', sample_output: '0 1 2 4 5 3', explanation: 'ans[0] = nums[nums[0]] = nums[0] = 0', question_bank_id: 1 },
-  { id: 116, title: 'Element Appearing More Than 25% in a Sorted Array', statement: 'Find integer that occurs more than 25% of the time.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Integer', sample_input: '9\n1 2 2 6 6 6 6 7 10', sample_output: '6', explanation: '6 appears 4/9 times (>25%)', question_bank_id: 1 },
-  { id: 117, title: 'Search Insert Position', statement: 'Return index if target is found or where it would be inserted.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers\nThird line: target', output_format: 'Index integer', sample_input: '4\n1 3 5 6\n5', sample_output: '2', explanation: '5 is at index 2', question_bank_id: 1 },
-  { id: 118, title: 'Move Zeroes', statement: 'Move all 0s to end while maintaining relative order of non-zero elements.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Space separated elements', sample_input: '5\n0 1 0 3 12', sample_output: '1 3 12 0 0', explanation: 'Zeroes moved to end', question_bank_id: 1 },
-  { id: 119, title: 'Remove Element', statement: 'Remove all instances of val in-place and return remaining.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers\nThird line: val', output_format: 'Remaining elements', sample_input: '4\n3 2 2 3\n3', sample_output: '2 2', explanation: '3s removed', question_bank_id: 1 },
-  { id: 120, title: 'Single Number', statement: 'Find single non-repeating element in array where others appear twice.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Single integer', sample_input: '3\n2 2 1', sample_output: '1', explanation: '1 appears once', question_bank_id: 1 },
+  { id: 101, title: 'Two Sum', statement: 'Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers\nThird line: target', output_format: 'Two space-separated indices', sample_input: '4\n2 7 11 15\n9', sample_output: '0 1', explanation: 'nums[0] + nums[1] = 9', question_bank_id: 1, test_cases: [{ id: 1011, input: '4\n2 7 11 15\n9', expected_output: '0 1', is_hidden: false }, { id: 1012, input: '3\n3 2 4\n6', expected_output: '1 2', is_hidden: true }] },
+  { id: 102, title: 'Reverse String', statement: 'Write a function that reverses a string.', difficulty: 'easy', marks: 50, topic: 'Strings', input_format: 'Single line string', output_format: 'Reversed string', sample_input: 'hello', sample_output: 'olleh', explanation: 'Reverse of hello is olleh', question_bank_id: 1, test_cases: [{ id: 1021, input: 'hello', expected_output: 'olleh', is_hidden: false }, { id: 1022, input: 'CodeArena', expected_output: 'anerAedoC', is_hidden: true }] },
+  { id: 103, title: 'Palindrome Check', statement: 'Determine if a string is a palindrome.', difficulty: 'easy', marks: 50, topic: 'Strings', input_format: 'Single line string', output_format: 'true or false', sample_input: 'racecar', sample_output: 'true', explanation: 'racecar is a palindrome', question_bank_id: 1, test_cases: [{ id: 1031, input: 'racecar', expected_output: 'true', is_hidden: false }, { id: 1032, input: 'hello', expected_output: 'false', is_hidden: true }] },
+  { id: 104, title: 'Maximum Subarray', statement: 'Find contiguous subarray with largest sum.', difficulty: 'medium', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Largest sum integer', sample_input: '9\n-2 1 -3 4 -1 2 1 -5 4', sample_output: '6', explanation: '[4,-1,2,1] has max sum 6', question_bank_id: 1, test_cases: [{ id: 1041, input: '9\n-2 1 -3 4 -1 2 1 -5 4', expected_output: '6', is_hidden: false }, { id: 1042, input: '1\n1', expected_output: '1', is_hidden: true }] },
+  { id: 105, title: 'Valid Parentheses', statement: 'Determine if input string of brackets is valid.', difficulty: 'easy', marks: 50, topic: 'Stacks', input_format: 'Single string', output_format: 'true or false', sample_input: '()[]{}', sample_output: 'true', explanation: 'Brackets closed correctly', question_bank_id: 1, test_cases: [{ id: 1051, input: '()[]{}', expected_output: 'true', is_hidden: false }, { id: 1052, input: '(]', expected_output: 'false', is_hidden: true }] },
+  { id: 106, title: 'Convert Temperature', statement: 'Convert Celsius to Kelvin and Fahrenheit.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single float celsius', output_format: 'Two lines: Kelvin\nFahrenheit', sample_input: '36.50', sample_output: '309.65\n97.70', explanation: 'Celsius converted to Kelvin and Fahrenheit', question_bank_id: 1, test_cases: [{ id: 1061, input: '36.50', expected_output: '309.65\n97.70', is_hidden: false }, { id: 1062, input: '122.11', expected_output: '395.26\n251.80', is_hidden: true }] },
+  { id: 107, title: 'Power of Three', statement: 'Given an integer n, return true if it is a power of three.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single integer n', output_format: 'true or false', sample_input: '27', sample_output: 'true', explanation: '27 is 3^3', question_bank_id: 1, test_cases: [{ id: 1071, input: '27', expected_output: 'true', is_hidden: false }, { id: 1072, input: '0', expected_output: 'false', is_hidden: true }] },
+  { id: 108, title: 'Sqrt(x)', statement: 'Compute and return the square root of x rounded down.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single integer x', output_format: 'Square root integer', sample_input: '8', sample_output: '2', explanation: 'sqrt(8) = 2.828 -> 2', question_bank_id: 1, test_cases: [{ id: 1081, input: '8', expected_output: '2', is_hidden: false }, { id: 1082, input: '4', expected_output: '2', is_hidden: true }] },
+  { id: 109, title: 'Remove Duplicates from Sorted Array', statement: 'Remove duplicates in-place from sorted array.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Space separated unique elements', sample_input: '3\n1 1 2', sample_output: '1 2', explanation: 'Unique elements are 1 and 2', question_bank_id: 1, test_cases: [{ id: 1091, input: '3\n1 1 2', expected_output: '1 2', is_hidden: false }, { id: 1092, input: '10\n0 0 1 1 1 2 2 3 3 4', expected_output: '0 1 2 3 4', is_hidden: true }] },
+  { id: 110, title: 'Roman to Integer', statement: 'Convert Roman numeral string to integer.', difficulty: 'easy', marks: 50, topic: 'Strings', input_format: 'Single Roman string', output_format: 'Integer', sample_input: 'III', sample_output: '3', explanation: 'III = 3', question_bank_id: 1, test_cases: [{ id: 1101, input: 'III', expected_output: '3', is_hidden: false }, { id: 1102, input: 'LVIII', expected_output: '58', is_hidden: true }] },
+  { id: 111, title: 'Palindrome Number', statement: 'Determine whether an integer is a palindrome.', difficulty: 'easy', marks: 50, topic: 'Math', input_format: 'Single integer', output_format: 'true or false', sample_input: '121', sample_output: 'true', explanation: '121 reads same backward', question_bank_id: 1, test_cases: [{ id: 1111, input: '121', expected_output: 'true', is_hidden: false }, { id: 1112, input: '-121', expected_output: 'false', is_hidden: true }] },
+  { id: 112, title: 'Sort Array By Parity', statement: 'Move all even integers to beginning of array followed by odd.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Space separated sorted elements', sample_input: '4\n3 1 2 4', sample_output: '2 4 3 1', explanation: 'Even numbers first', question_bank_id: 1, test_cases: [{ id: 1121, input: '4\n3 1 2 4', expected_output: '2 4 3 1', is_hidden: false }, { id: 1122, input: '1\n0', expected_output: '0', is_hidden: true }] },
+  { id: 113, title: 'Shuffle the Array', statement: 'Given array nums consisting of 2n elements, return array in form [x1,y1,x2,y2...].', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: 2n integers', output_format: 'Shuffled elements', sample_input: '3\n2 5 1 3 4 7', sample_output: '2 3 5 4 1 7', explanation: 'Pairs (x_i, y_i) interleaved', question_bank_id: 1, test_cases: [{ id: 1131, input: '3\n2 5 1 3 4 7', expected_output: '2 3 5 4 1 7', is_hidden: false }, { id: 1132, input: '4\n1 2 3 4 4 3 2 1', expected_output: '1 4 2 3 3 2 4 1', is_hidden: true }] },
+  { id: 114, title: 'Single Element in a Sorted Array', statement: 'Every element appears twice except for one. Find single element.', difficulty: 'medium', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Single element integer', sample_input: '9\n1 1 2 3 3 4 4 8 8', sample_output: '2', explanation: '2 appears once', question_bank_id: 1, test_cases: [{ id: 1141, input: '9\n1 1 2 3 3 4 4 8 8', expected_output: '2', is_hidden: false }, { id: 1142, input: '7\n3 3 7 7 10 11 11', expected_output: '10', is_hidden: true }] },
+  { id: 115, title: 'Build Array from Permutation', statement: 'Build array ans where ans[i] = nums[nums[i]].', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Permuted elements', sample_input: '6\n0 2 1 5 3 4', sample_output: '0 1 2 4 5 3', explanation: 'ans[0] = nums[nums[0]] = nums[0] = 0', question_bank_id: 1, test_cases: [{ id: 1151, input: '6\n0 2 1 5 3 4', expected_output: '0 1 2 4 5 3', is_hidden: false }, { id: 1152, input: '5\n5 0 1 2 3 4', expected_output: '4 5 0 1 2 3', is_hidden: true }] },
+  { id: 116, title: 'Element Appearing More Than 25% in a Sorted Array', statement: 'Find integer that occurs more than 25% of the time.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Integer', sample_input: '9\n1 2 2 6 6 6 6 7 10', sample_output: '6', explanation: '6 appears 4/9 times (>25%)', question_bank_id: 1, test_cases: [{ id: 1161, input: '9\n1 2 2 6 6 6 6 7 10', expected_output: '6', is_hidden: false }, { id: 1162, input: '4\n1 1 2 2', expected_output: '1', is_hidden: true }] },
+  { id: 117, title: 'Search Insert Position', statement: 'Return index if target is found or where it would be inserted.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers\nThird line: target', output_format: 'Index integer', sample_input: '4\n1 3 5 6\n5', sample_output: '2', explanation: '5 is at index 2', question_bank_id: 1, test_cases: [{ id: 1171, input: '4\n1 3 5 6\n5', expected_output: '2', is_hidden: false }, { id: 1172, input: '4\n1 3 5 6\n2', expected_output: '1', is_hidden: true }] },
+  { id: 118, title: 'Move Zeroes', statement: 'Move all 0s to end while maintaining relative order of non-zero elements.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Space separated elements', sample_input: '5\n0 1 0 3 12', sample_output: '1 3 12 0 0', explanation: 'Zeroes moved to end', question_bank_id: 1, test_cases: [{ id: 1181, input: '5\n0 1 0 3 12', expected_output: '1 3 12 0 0', is_hidden: false }, { id: 1182, input: '1\n0', expected_output: '0', is_hidden: true }] },
+  { id: 119, title: 'Remove Element', statement: 'Remove all instances of val in-place and return remaining.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers\nThird line: val', output_format: 'Remaining elements', sample_input: '4\n3 2 2 3\n3', sample_output: '2 2', explanation: '3s removed', question_bank_id: 1, test_cases: [{ id: 1191, input: '4\n3 2 2 3\n3', expected_output: '2 2', is_hidden: false }, { id: 1192, input: '8\n0 1 2 2 3 0 4 2\n2', expected_output: '0 1 3 0 4', is_hidden: true }] },
+  { id: 120, title: 'Single Number', statement: 'Find single non-repeating element in array where others appear twice.', difficulty: 'easy', marks: 50, topic: 'Arrays', input_format: 'First line: n\nSecond line: n integers', output_format: 'Single integer', sample_input: '3\n2 2 1', sample_output: '1', explanation: '1 appears once', question_bank_id: 1, test_cases: [{ id: 1201, input: '3\n2 2 1', expected_output: '1', is_hidden: false }, { id: 1202, input: '5\n4 1 2 1 2', expected_output: '4', is_hidden: true }] },
 ];
 
 export const adminAPI = {
@@ -1162,14 +1178,18 @@ export const adminAPI = {
         data = data.filter(q => q.difficulty === params.difficulty);
       }
       
-      // Map question_bank_id (default to Question Bank 1 if not explicitly set)
+      // Map question_bank_id (default to Question Bank 1 if not explicitly set) and ensure test_cases are attached
       const localMappings = getLocalQuestionMappings();
       const mapped = data.map(q => {
         let qbId = q.question_bank_id;
         if (qbId === undefined || qbId === null || !qbId) {
           qbId = localMappings[q.id] || 1;
         }
-        return { ...q, question_bank_id: parseInt(qbId) };
+        return {
+          ...q,
+          question_bank_id: parseInt(qbId),
+          test_cases: ensureTestCases(q)
+        };
       });
 
       if (params?.question_bank_id) {
@@ -1180,19 +1200,27 @@ export const adminAPI = {
       return { data: mapped };
     } catch (e) {
       console.error('getQuestions error, returning DEFAULT_ALL_QUESTIONS:', e);
-      return { data: DEFAULT_ALL_QUESTIONS };
+      return { data: DEFAULT_ALL_QUESTIONS.map(q => ({ ...q, test_cases: ensureTestCases(q) })) };
     }
   },
 
   getQuestion: async (id) => {
-    const { data, error } = await supabase.from('questions').select('*, test_cases(*)').eq('id', id).single();
-    if (error) throw error;
-    if (data) {
-      let qbId = data.question_bank_id;
-      if (qbId === undefined || qbId === null || !qbId) {
-        qbId = getLocalQuestionMappings()[data.id] || 1;
+    try {
+      const { data, error } = await supabase.from('questions').select('*, test_cases(*)').eq('id', id).single();
+      if (!error && data) {
+        let qbId = data.question_bank_id;
+        if (qbId === undefined || qbId === null || !qbId) {
+          qbId = getLocalQuestionMappings()[data.id] || 1;
+        }
+        return { data: { ...data, question_bank_id: parseInt(qbId), test_cases: ensureTestCases(data) } };
       }
-      return { data: { ...data, question_bank_id: parseInt(qbId) } };
+    } catch (e) {
+      console.warn('getQuestion Supabase error, falling back:', e);
+    }
+    const numericId = parseInt(id);
+    const fallbackQ = DEFAULT_ALL_QUESTIONS.find(q => q.id === numericId || q.id === id);
+    if (fallbackQ) {
+      return { data: { ...fallbackQ, test_cases: ensureTestCases(fallbackQ) } };
     }
     return { data: null };
   },
