@@ -441,16 +441,27 @@ export default function ExamInterface() {
     setRunResult(null);
     saveCode();
     try {
-      const selectedCase = activeCaseIdx === 'custom' ? null : qObj.question?.test_cases?.[activeCaseIdx] || qObj.test_cases?.[activeCaseIdx];
-      const result = await executionClient.runCase({
-        attempt_id: parseInt(attemptId),
-        question_id: qId,
-        language,
-        source_code: code,
-        input: activeCaseIdx === 'custom' ? customInput : (selectedCase?.input || ''),
-        expected_output: activeCaseIdx === 'custom' ? null : (selectedCase?.expected_output || ''),
-      });
-      setRunResult({ ...result, language });
+      if (activeCaseIdx === 'custom') {
+        const result = await executionClient.runCase({
+          attempt_id: parseInt(attemptId),
+          question_id: qId,
+          language,
+          source_code: code,
+          input: customInput,
+          expected_output: null,
+        });
+        setRunResult({ ...result, language });
+      } else {
+        const result = await executionClient.runAllSamples({
+          attempt_id: parseInt(attemptId),
+          question_id: qId,
+          language,
+          source_code: code,
+        });
+        setRunResult({ ...result, language });
+        const firstFail = result?.results?.findIndex(r => !r.passed);
+        setActiveCaseIdx(firstFail !== undefined && firstFail !== -1 ? firstFail : 0);
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Execution error');
     } finally { setRunning(false); }
@@ -465,16 +476,29 @@ export default function ExamInterface() {
     setSubmittingCode(true);
     saveCode();
     try {
-      const result = await executionClient.runAllSamples({
+      const result = await executionClient.submitCode({
         attempt_id: parseInt(attemptId),
         question_id: qId,
         language,
         source_code: code,
       });
-      setRunResult({ ...result, language });
-      const firstFail = result?.results?.findIndex(r => !r.passed);
-      setActiveCaseIdx(firstFail !== undefined && firstFail !== -1 ? firstFail : 0);
-      toast.success(result?.passed === result?.total && result?.total > 0 ? 'Accepted' : 'Test results are ready');
+      
+      // Update UI to indicate successful submission without revealing test case details
+      setQuestions(prev => {
+        const newQs = [...prev];
+        if (newQs[currentIdx]) {
+          newQs[currentIdx] = { ...newQs[currentIdx], is_submitted: true };
+        }
+        return newQs;
+      });
+      
+      toast.success('Code submitted successfully!');
+      
+      // Optionally move to next unsubmitted question
+      const nextIdx = questions.findIndex((q, idx) => idx > currentIdx && !q.is_submitted);
+      if (nextIdx !== -1) {
+        switchQuestion(nextIdx);
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Submission error');
     } finally { setSubmittingCode(false); }

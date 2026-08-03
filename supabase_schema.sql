@@ -87,11 +87,22 @@ ALTER TABLE public.tests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.test_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submissions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow public access users" ON public.users;
 CREATE POLICY "Allow public access users" ON public.users FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access questions" ON public.questions;
 CREATE POLICY "Allow public access questions" ON public.questions FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access test_cases" ON public.test_cases;
 CREATE POLICY "Allow public access test_cases" ON public.test_cases FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access tests" ON public.tests;
 CREATE POLICY "Allow public access tests" ON public.tests FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access test_attempts" ON public.test_attempts;
 CREATE POLICY "Allow public access test_attempts" ON public.test_attempts FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public access submissions" ON public.submissions;
 CREATE POLICY "Allow public access submissions" ON public.submissions FOR ALL USING (true) WITH CHECK (true);
 
 -- 7. Insert Initial Seed Data for Assessment

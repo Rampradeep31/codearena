@@ -4,6 +4,7 @@ import { codeAPI } from './api';
 export const executionClient = {
   runCase: async (payload) => (await codeAPI.runCase(payload)).data,
   runAllSamples: async (payload) => (await codeAPI.run(payload)).data,
+  submitCode: async (payload) => (await codeAPI.submit(payload)).data,
 };
 
 export function getVerdict(result) {

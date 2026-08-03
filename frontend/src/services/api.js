@@ -540,8 +540,9 @@ export const codeAPI = {
       const res = await backendApi.post('/code/submit', data);
 
       try {
+        const attemptId = data.attempt_id || 1;
         await supabase.from('submissions').insert({
-          attempt_id: data.attempt_id || 1,
+          attempt_id: attemptId,
           question_id: data.question_id,
           language: data.language || 'python',
           code: data.code || data.source_code,
@@ -550,6 +551,27 @@ export const codeAPI = {
           total_test_cases: res.data.total_test_cases || 0,
           passed_test_cases: res.data.passed_test_cases || 0,
         });
+
+        // Recalculate the overall attempt score (sum of max score per question)
+        const { data: allSubs } = await supabase
+          .from('submissions')
+          .select('question_id, score')
+          .eq('attempt_id', attemptId);
+          
+        if (allSubs) {
+          const maxScores = {};
+          allSubs.forEach(s => {
+            if (!maxScores[s.question_id] || s.score > maxScores[s.question_id]) {
+              maxScores[s.question_id] = s.score;
+            }
+          });
+          const totalScore = Object.values(maxScores).reduce((sum, s) => sum + (s || 0), 0);
+          
+          await supabase
+            .from('test_attempts')
+            .update({ score: totalScore })
+            .eq('id', attemptId);
+        }
       } catch (supabaseError) {
         console.warn('Supabase submission insert error:', supabaseError);
       }
