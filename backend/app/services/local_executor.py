@@ -77,8 +77,12 @@ def _transpile_to_python(source_code: str, language: str) -> str:
 
     for line in lines:
         stripped = line.strip()
-        if not stripped:
+        if not stripped or stripped in ("{", "}", "};"):
             continue
+
+        # Convert // comments to #
+        if "//" in stripped:
+            stripped = re.sub(r"//(.*)", r"#\1", stripped)
 
         # Skip headers, imports, class boilerplate, return statements
         if (
@@ -94,18 +98,20 @@ def _transpile_to_python(source_code: str, language: str) -> str:
             continue
         if "public static void main" in stripped or "int main(" in stripped or "void main(" in stripped:
             continue
-        if stripped in ("}", "};"):
-            continue
 
         line_sub = stripped
 
+        # Convert Java/C++ true/false literals
+        line_sub = re.sub(r"\btrue\b", "True", line_sub)
+        line_sub = re.sub(r"\bfalse\b", "False", line_sub)
+
         # System.out.println / print
-        line_sub = re.sub(r"System\.out\.println\s*\((.*?)\)\s*;", r"print(\1)", line_sub)
-        line_sub = re.sub(r"System\.out\.print\s*\((.*?)\)\s*;", r"print(\1, end='')", line_sub)
+        line_sub = re.sub(r"System\.out\.println\s*\((.*?)\)\s*;", r"print(str(\1).lower() if isinstance(\1, bool) else \1)", line_sub)
+        line_sub = re.sub(r"System\.out\.print\s*\((.*?)\)\s*;", r"print(str(\1).lower() if isinstance(\1, bool) else \1, end='')", line_sub)
 
         # C++ cout / cin
         line_sub = re.sub(r"\s*<<\s*(?:std::)?endl", "", line_sub)
-        line_sub = re.sub(r"(?:std::)?cout\s*<<\s*(.*?)\s*;\s*$", r"print(\1)", line_sub)
+        line_sub = re.sub(r"(?:std::)?cout\s*<<\s*(.*?)\s*;\s*$", r"print(str(\1).lower() if isinstance(\1, bool) else \1)", line_sub)
 
         # System.out.printf and printf
         if "printf" in line_sub:
@@ -142,10 +148,10 @@ def _transpile_to_python(source_code: str, language: str) -> str:
         line_sub = re.sub(r"\bnew\s+", "", line_sub)
 
         # Simple variable declaration replacement: int n = ... -> n = ...
-        line_sub = re.sub(r"\b(int|long|double|float|String|char|bool|auto|StringBuilder)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", r"\2 =", line_sub)
+        line_sub = re.sub(r"\b(int|long|double|float|String|char|bool|boolean|auto|StringBuilder)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", r"\2 =", line_sub)
 
         # Arrays: int[] nums = new int[n]; -> nums = [0] * (n)
-        line_sub = re.sub(r"\b(int|long|double|float|String)\[\]\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\w+\[(.*?)\]\s*;", r"\2 = [0] * (\3)", line_sub)
+        line_sub = re.sub(r"\b(int|long|double|float|String|boolean)\[\]\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\w+\[(.*?)\]\s*;", r"\2 = [0] * (\3)", line_sub)
 
         # Clean trailing semicolons
         if line_sub.strip().endswith(";") and not line_sub.strip().startswith("for"):
