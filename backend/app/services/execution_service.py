@@ -62,8 +62,19 @@ async def run_against_test_cases(
         actual_output = (result.get("output") or "").strip()
         expected = (tc.expected_output or "").strip()
 
-        # Passed iff status is 'accepted' AND actual output matches expected output after trim()
-        passed = (result.get("status") == "accepted") and (actual_output == expected)
+        # LeetCode style comparison: 
+        # 1. Exact match (already stripped)
+        # 2. Line by line strip
+        # 3. Token by token split
+        def compare_outputs(act: str, exp: str) -> bool:
+            if act == exp: return True
+            act_lines = [l.strip() for l in act.splitlines() if l.strip()]
+            exp_lines = [l.strip() for l in exp.splitlines() if l.strip()]
+            if act_lines == exp_lines: return True
+            if act.split() == exp.split(): return True
+            return False
+
+        passed = (result.get("status") == "accepted") and compare_outputs(actual_output, expected)
 
         results.append({
             "test_case_id": tc.id,

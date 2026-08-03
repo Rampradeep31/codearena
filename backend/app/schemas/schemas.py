@@ -281,6 +281,11 @@ class CodeRunRequest(BaseModel):
     source_code: str
 
 
+class CodeRunCaseRequest(CodeRunRequest):
+    input: str = ""
+    expected_output: Optional[str] = None
+
+
 class CodeSaveRequest(BaseModel):
     question_id: int
     language: str

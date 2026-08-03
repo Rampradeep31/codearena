@@ -11,13 +11,34 @@ from app.models.attempt import (
     AttemptStatus,
 )
 from app.schemas.schemas import (
-    CodeRunRequest, CodeRunResponse, CodeSubmitResponse, TestCaseResult,
+    CodeRunRequest, CodeRunCaseRequest, CodeRunResponse, CodeSubmitResponse, TestCaseResult,
 )
 from app.security.dependencies import require_student
-from app.services.execution_service import run_against_test_cases
+from app.services.execution_service import run_against_test_cases, execute_code
 from app.utils import ensure_aware
 
 router = APIRouter(prefix="/code", tags=["Code Execution"])
+
+
+@router.post("/run-case", response_model=CodeRunResponse)
+async def run_single_case(data: CodeRunCaseRequest, user: User = Depends(require_student)):
+    """Run one sample or custom input locally without creating a submission."""
+    result = await execute_code(data.source_code, data.language, data.input, data.expected_output)
+    actual_output = (result.get("output") or "").strip()
+    expected = (data.expected_output or "").strip()
+    status = result.get("status", "error")
+    passed = status == "accepted" and (data.expected_output is None or actual_output == expected)
+    compilation_error = result.get("error") if status == "compilation_error" else None
+    return CodeRunResponse(
+        compilation_status="error" if compilation_error else "success",
+        compilation_error=compilation_error,
+        results=[TestCaseResult(
+            test_case_id=None, passed=passed, input=data.input,
+            expected_output=data.expected_output, actual_output=actual_output,
+            execution_time=result.get("execution_time", 0), memory_used=result.get("memory_used", 0), status=status,
+        )],
+        passed=1 if passed else 0, total=1,
+    )
 
 
 @router.post("/run", response_model=CodeRunResponse)

@@ -5,6 +5,8 @@ import { useAuth } from '../../context/AuthContext';
 import { studentAPI, codeAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 import WebcamProctor from '../../components/WebcamProctor';
+import LeetCodeTestPanel from '../../components/execution/LeetCodeTestPanel';
+import { executionClient } from '../../services/executionClient';
 import {
   HiOutlineCode, HiOutlinePlay, HiOutlineUpload, HiOutlineClock,
   HiOutlineChevronLeft, HiOutlineChevronRight, HiOutlineShieldExclamation,
@@ -161,6 +163,7 @@ export default function ExamInterface() {
   const [timeLeft, setTimeLeft] = useState(0);
   const [runResult, setRunResult] = useState(null);
   const [activeCaseIdx, setActiveCaseIdx] = useState(0);
+  const [customInput, setCustomInput] = useState('');
   const [resultTab, setResultTab] = useState('result');
   const [running, setRunning] = useState(false);
   const [submittingCode, setSubmittingCode] = useState(false);
@@ -438,16 +441,16 @@ export default function ExamInterface() {
     setRunResult(null);
     saveCode();
     try {
-      const res = await codeAPI.run({
+      const selectedCase = activeCaseIdx === 'custom' ? null : qObj.question?.test_cases?.[activeCaseIdx] || qObj.test_cases?.[activeCaseIdx];
+      const result = await executionClient.runCase({
         attempt_id: parseInt(attemptId),
         question_id: qId,
         language,
         source_code: code,
+        input: activeCaseIdx === 'custom' ? customInput : (selectedCase?.input || ''),
+        expected_output: activeCaseIdx === 'custom' ? null : (selectedCase?.expected_output || ''),
       });
-      setRunResult(res.data);
-      setResultTab('result');
-      const firstFail = res.data?.results?.findIndex(r => !r.passed);
-      setActiveCaseIdx(firstFail !== undefined && firstFail !== -1 ? firstFail : 0);
+      setRunResult({ ...result, language });
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Execution error');
     } finally { setRunning(false); }
@@ -462,21 +465,16 @@ export default function ExamInterface() {
     setSubmittingCode(true);
     saveCode();
     try {
-      const res = await codeAPI.submit({
+      const result = await executionClient.runAllSamples({
         attempt_id: parseInt(attemptId),
         question_id: qId,
         language,
         source_code: code,
       });
-      toast.success(`Score: ${res.data.passed_test_cases}/${res.data.total_test_cases} test cases passed`);
-      const updated = [...questions];
-      updated[currentIdx] = { ...updated[currentIdx], is_submitted: true, submission_score: res.data.score };
-      setQuestions(updated);
-
-      setRunResult(res.data);
-      setResultTab('result');
-      const firstFail = res.data?.results?.findIndex(r => !r.passed);
+      setRunResult({ ...result, language });
+      const firstFail = result?.results?.findIndex(r => !r.passed);
       setActiveCaseIdx(firstFail !== undefined && firstFail !== -1 ? firstFail : 0);
+      toast.success(result?.passed === result?.total && result?.total > 0 ? 'Accepted' : 'Test results are ready');
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Submission error');
     } finally { setSubmittingCode(false); }

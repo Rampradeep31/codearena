@@ -513,6 +513,10 @@ export const studentAPI = {
 };
 
 export const codeAPI = {
+  runCase: async (data) => {
+    const res = await backendApi.post('/code/run-case', data);
+    return res;
+  },
   run: async (data) => {
     try {
       const res = await backendApi.post('/code/run', data);
