@@ -375,7 +375,7 @@ export const studentAPI = {
         throw new Error("User not authenticated");
       }
 
-      // Check if attempt already exists
+      // Check if active in_progress attempt already exists
       const { data: existingAttempts } = await supabase
         .from('test_attempts')
         .select('*')
@@ -384,10 +384,13 @@ export const studentAPI = {
         .order('id', { ascending: false });
 
       if (existingAttempts && existingAttempts.length > 0) {
-        return { data: existingAttempts[0] };
+        const activeAttempt = existingAttempts.find(a => a.status === 'in_progress');
+        if (activeAttempt) {
+          return { data: activeAttempt };
+        }
       }
 
-      // Create new attempt
+      // Create new in_progress attempt
       const durationMin = 60;
       const expiresAt = new Date(Date.now() + durationMin * 60 * 1000).toISOString();
 
@@ -412,7 +415,7 @@ export const studentAPI = {
       console.warn('Supabase startTest error:', e);
     }
 
-    return { data: { id: 1, test_id: testId, status: 'in_progress' } };
+    return { data: { id: Date.now(), test_id: testId, status: 'in_progress', expires_at: new Date(Date.now() + 3600000).toISOString() } };
   },
 
   saveCode: async (attemptId, data) => {
