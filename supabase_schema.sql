@@ -107,17 +107,17 @@ CREATE POLICY "Allow public access submissions" ON public.submissions FOR ALL US
 
 -- 7. Insert Initial Seed Data for Assessment
 INSERT INTO public.tests (id, name, description, duration_minutes, questions_per_student, total_marks)
-VALUES (1, 'AI & DS Coding Assessment - Round 1', 'Official online assessment for AI & DS department. Complete 5 coding challenges within 60 minutes.', 60, 5, 50)
-ON CONFLICT (id) DO NOTHING;
+VALUES (1, 'AI & DS Coding Assessment - Round 1', 'Official online assessment for AI & DS department. Complete 1 coding challenge within 60 minutes.', 60, 1, 50)
+ON CONFLICT (id) DO UPDATE SET questions_per_student = 1, total_marks = 50;
 
 INSERT INTO public.questions (id, title, statement, difficulty, marks, topic, input_format, output_format, sample_input, sample_output, explanation)
 VALUES 
-(101, 'Two Sum', 'Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.', 'easy', 10, 'Arrays', 'First line: n\nSecond line: n integers\nThird line: target', 'Two space-separated indices', '4\n2 7 11 15\n9', '0 1', 'nums[0] + nums[1] = 9'),
-(102, 'Reverse String', 'Write a function that reverses a string.', 'easy', 10, 'Strings', 'Single line string', 'Reversed string', 'hello', 'olleh', 'Reverse of hello is olleh'),
-(103, 'Palindrome Check', 'Determine if a string is a palindrome.', 'easy', 10, 'Strings', 'Single line string', 'true or false', 'racecar', 'true', 'racecar is a palindrome'),
-(104, 'Maximum Subarray', 'Find contiguous subarray with largest sum.', 'medium', 10, 'Arrays', 'First line: n\nSecond line: n integers', 'Largest sum integer', '9\n-2 1 -3 4 -1 2 1 -5 4', '6', '[4,-1,2,1] has max sum 6'),
-(105, 'Valid Parentheses', 'Determine if input string of brackets is valid.', 'easy', 10, 'Stacks', 'Single string', 'true or false', '()[]{}', 'true', 'Brackets closed correctly')
-ON CONFLICT (id) DO NOTHING;
+(101, 'Two Sum', 'Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers\nThird line: target', 'Two space-separated indices', '4\n2 7 11 15\n9', '0 1', 'nums[0] + nums[1] = 9'),
+(102, 'Reverse String', 'Write a function that reverses a string.', 'easy', 50, 'Strings', 'Single line string', 'Reversed string', 'hello', 'olleh', 'Reverse of hello is olleh'),
+(103, 'Palindrome Check', 'Determine if a string is a palindrome.', 'easy', 50, 'Strings', 'Single line string', 'true or false', 'racecar', 'true', 'racecar is a palindrome'),
+(104, 'Maximum Subarray', 'Find contiguous subarray with largest sum.', 'medium', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Largest sum integer', '9\n-2 1 -3 4 -1 2 1 -5 4', '6', '[4,-1,2,1] has max sum 6'),
+(105, 'Valid Parentheses', 'Determine if input string of brackets is valid.', 'easy', 50, 'Stacks', 'Single string', 'true or false', '()[]{}', 'true', 'Brackets closed correctly')
+ON CONFLICT (id) DO UPDATE SET marks = 50;
 
 INSERT INTO public.test_cases (question_id, input, expected_output, is_hidden)
 VALUES 

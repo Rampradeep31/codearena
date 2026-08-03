@@ -34,7 +34,7 @@ const DEFAULT_QUESTIONS = [
       id: 101,
       title: "Two Sum",
       difficulty: "easy",
-      marks: 10,
+      marks: 50,
       topic: "Arrays",
       statement: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to target.",
       input_format: "First line: n\nSecond line: n integers\nThird line: target",

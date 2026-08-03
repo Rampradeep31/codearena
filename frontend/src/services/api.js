@@ -162,9 +162,9 @@ export const studentAPI = {
         active: [{
           id: 1,
           name: "AI & DS Coding Assessment - Round 1",
-          description: "Official online assessment for AI & DS department. Complete 5 coding challenges within 60 minutes.",
+          description: "Official online assessment for AI & DS department. Complete 1 coding challenge within 60 minutes.",
           duration_minutes: 60,
-          questions_per_student: 5,
+          questions_per_student: 1,
           total_marks: 50,
           allowed_languages: ["python", "java", "c", "cpp"],
           max_violations: 3
@@ -221,7 +221,7 @@ export const studentAPI = {
       const meta = getStudentLocalTestMetadata()[test.id] || { year: 'Second Year', question_bank_id: test.question_bank_id || null, randomize_questions: !!test.randomize_questions };
       const qBankId = meta.question_bank_id;
       const randomize = meta.randomize_questions;
-      const questionsPerStudent = test.questions_per_student || 5;
+      const questionsPerStudent = test.questions_per_student || 1;
 
       // 3. Check if questions are already assigned in localStorage for this attempt
       const attemptAssignedKey = `codearena_attempt_questions_${attemptId}`;
@@ -1237,7 +1237,7 @@ export const adminAPI = {
           department: student?.department || 'AI & DS',
           section: student?.section || 'A',
           year: student?.year === 3 ? 'Third Year' : 'Second Year',
-          questions_assigned: test?.questions_per_student || 5,
+          questions_assigned: test?.questions_per_student || 1,
           questions_attempted: attemptSubs.length,
           questions_solved: attemptSubs.length,
           score: score,
