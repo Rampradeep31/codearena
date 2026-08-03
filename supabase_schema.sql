@@ -116,7 +116,22 @@ VALUES
 (102, 'Reverse String', 'Write a function that reverses a string.', 'easy', 50, 'Strings', 'Single line string', 'Reversed string', 'hello', 'olleh', 'Reverse of hello is olleh'),
 (103, 'Palindrome Check', 'Determine if a string is a palindrome.', 'easy', 50, 'Strings', 'Single line string', 'true or false', 'racecar', 'true', 'racecar is a palindrome'),
 (104, 'Maximum Subarray', 'Find contiguous subarray with largest sum.', 'medium', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Largest sum integer', '9\n-2 1 -3 4 -1 2 1 -5 4', '6', '[4,-1,2,1] has max sum 6'),
-(105, 'Valid Parentheses', 'Determine if input string of brackets is valid.', 'easy', 50, 'Stacks', 'Single string', 'true or false', '()[]{}', 'true', 'Brackets closed correctly')
+(105, 'Valid Parentheses', 'Determine if input string of brackets is valid.', 'easy', 50, 'Stacks', 'Single string', 'true or false', '()[]{}', 'true', 'Brackets closed correctly'),
+(106, 'Convert Temperature', 'Convert Celsius to Kelvin and Fahrenheit.', 'easy', 50, 'Math', 'Single float celsius', 'Two lines: Kelvin\nFahrenheit', '36.50', '309.65\n97.70', 'Celsius converted to Kelvin and Fahrenheit'),
+(107, 'Power of Three', 'Given an integer n, return true if it is a power of three.', 'easy', 50, 'Math', 'Single integer n', 'true or false', '27', 'true', '27 is 3^3'),
+(108, 'Sqrt(x)', 'Compute and return the square root of x rounded down.', 'easy', 50, 'Math', 'Single integer x', 'Square root integer', '8', '2', 'sqrt(8) = 2.828 -> 2'),
+(109, 'Remove Duplicates from Sorted Array', 'Remove duplicates in-place from sorted array.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Space separated unique elements', '3\n1 1 2', '1 2', 'Unique elements are 1 and 2'),
+(110, 'Roman to Integer', 'Convert Roman numeral string to integer.', 'easy', 50, 'Strings', 'Single Roman string', 'Integer', 'III', '3', 'III = 3'),
+(111, 'Palindrome Number', 'Determine whether an integer is a palindrome.', 'easy', 50, 'Math', 'Single integer', 'true or false', '121', 'true', '121 reads same backward'),
+(112, 'Sort Array By Parity', 'Move all even integers to beginning of array followed by odd.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Space separated sorted elements', '4\n3 1 2 4', '2 4 3 1', 'Even numbers first'),
+(113, 'Shuffle the Array', 'Given array nums consisting of 2n elements, return array in form [x1,y1,x2,y2...].', 'easy', 50, 'Arrays', 'First line: n\nSecond line: 2n integers', 'Shuffled elements', '3\n2 5 1 3 4 7', '2 3 5 4 1 7', 'Pairs (x_i, y_i) interleaved'),
+(114, 'Single Element in a Sorted Array', 'Every element appears twice except for one. Find single element.', 'medium', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Single element integer', '9\n1 1 2 3 3 4 4 8 8', '2', '2 appears once'),
+(115, 'Build Array from Permutation', 'Build array ans where ans[i] = nums[nums[i]].', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Permuted elements', '6\n0 2 1 5 3 4', '0 1 2 4 5 3', 'ans[0] = nums[nums[0]] = nums[0] = 0'),
+(116, 'Element Appearing More Than 25% in a Sorted Array', 'Find integer that occurs more than 25% of the time.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Integer', '9\n1 2 2 6 6 6 6 7 10', '6', '6 appears 4/9 times (>25%)'),
+(117, 'Search Insert Position', 'Return index if target is found or where it would be inserted.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers\nThird line: target', 'Index integer', '4\n1 3 5 6\n5', '2', '5 is at index 2'),
+(118, 'Move Zeroes', 'Move all 0s to end while maintaining relative order of non-zero elements.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Space separated elements', '5\n0 1 0 3 12', '1 3 12 0 0', 'Zeroes moved to end'),
+(119, 'Remove Element', 'Remove all instances of val in-place and return remaining.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers\nThird line: val', 'Remaining elements', '4\n3 2 2 3\n3', '2 2', '3s removed'),
+(120, 'Single Number', 'Find single non-repeating element in array where others appear twice.', 'easy', 50, 'Arrays', 'First line: n\nSecond line: n integers', 'Single integer', '3\n2 2 1', '1', '1 appears once')
 ON CONFLICT (id) DO UPDATE SET marks = 50;
 
 INSERT INTO public.test_cases (question_id, input, expected_output, is_hidden)
@@ -132,5 +147,20 @@ VALUES
 (105, '()[]{}', 'true', false),
 (105, '(]', 'false', false),
 (105, '([)]', 'false', true),
-(105, '{[]}', 'true', true)
+(105, '{[]}', 'true', true),
+(106, '36.50', '309.65\n97.70', false),
+(107, '27', 'true', false),
+(108, '8', '2', false),
+(109, '3\n1 1 2', '1 2', false),
+(110, 'III', '3', false),
+(111, '121', 'true', false),
+(112, '4\n3 1 2 4', '2 4 3 1', false),
+(113, '3\n2 5 1 3 4 7', '2 3 5 4 1 7', false),
+(114, '9\n1 1 2 3 3 4 4 8 8', '2', false),
+(115, '6\n0 2 1 5 3 4', '0 1 2 4 5 3', false),
+(116, '9\n1 2 2 6 6 6 6 7 10', '6', false),
+(117, '4\n1 3 5 6\n5', '2', false),
+(118, '5\n0 1 0 3 12', '1 3 12 0 0', false),
+(119, '4\n3 2 2 3\n3', '2 2', false),
+(120, '3\n2 2 1', '1', false)
 ON CONFLICT DO NOTHING;
