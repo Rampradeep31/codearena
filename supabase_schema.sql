@@ -136,31 +136,103 @@ ON CONFLICT (id) DO UPDATE SET marks = 50;
 
 INSERT INTO public.test_cases (question_id, input, expected_output, is_hidden)
 VALUES 
+-- 101: Two Sum
 (101, '4\n2 7 11 15\n9', '0 1', false),
 (101, '3\n3 2 4\n6', '1 2', false),
+(101, '2\n3 3\n6', '0 1', true),
+
+-- 102: Reverse String
 (102, 'hello', 'olleh', false),
 (102, 'world', 'dlrow', false),
+(102, 'CodeArena', 'anerAedoC', true),
+
+-- 103: Palindrome Check
 (103, 'racecar', 'true', false),
 (103, 'hello', 'false', false),
+(103, 'madam', 'true', true),
+
+-- 104: Maximum Subarray
 (104, '9\n-2 1 -3 4 -1 2 1 -5 4', '6', false),
-(104, '5\n5 4 -1 7 8', '23', false),
+(104, '1\n1', '1', false),
+(104, '5\n5 4 -1 7 8', '23', true),
+
+-- 105: Valid Parentheses
 (105, '()[]{}', 'true', false),
 (105, '(]', 'false', false),
-(105, '([)]', 'false', true),
 (105, '{[]}', 'true', true),
+
+-- 106: Convert Temperature
 (106, '36.50', '309.65\n97.70', false),
+(106, '0.00', '273.15\n32.00', false),
+(106, '100.00', '373.15\n212.00', true),
+
+-- 107: Power of Three
 (107, '27', 'true', false),
+(107, '0', 'false', false),
+(107, '9', 'true', true),
+
+-- 108: Sqrt(x)
+(108, '4', '2', false),
 (108, '8', '2', false),
+(108, '16', '4', true),
+
+-- 109: Remove Duplicates from Sorted Array
 (109, '3\n1 1 2', '1 2', false),
+(109, '10\n0 0 1 1 1 2 2 3 3 4', '0 1 2 3 4', false),
+(109, '2\n1 1', '1', true),
+
+-- 110: Roman to Integer
 (110, 'III', '3', false),
+(110, 'LVIII', '58', false),
+(110, 'MCMXCIV', '1994', true),
+
+-- 111: Palindrome Number
 (111, '121', 'true', false),
+(111, '-121', 'false', false),
+(111, '10', 'false', true),
+
+-- 112: Sort Array By Parity
 (112, '4\n3 1 2 4', '2 4 3 1', false),
+(112, '1\n0', '0', false),
+(112, '2\n1 2', '2 1', true),
+
+-- 113: Shuffle the Array
 (113, '3\n2 5 1 3 4 7', '2 3 5 4 1 7', false),
+(113, '4\n1 2 3 4 4 3 2 1', '1 4 2 3 3 2 4 1', false),
+(113, '2\n1 1 2 2', '1 2 1 2', true),
+
+-- 114: Single Element in a Sorted Array
 (114, '9\n1 1 2 3 3 4 4 8 8', '2', false),
+(114, '7\n3 3 7 7 10 11 11', '10', false),
+(114, '1\n1', '1', true),
+
+-- 115: Build Array from Permutation
 (115, '6\n0 2 1 5 3 4', '0 1 2 4 5 3', false),
+(115, '6\n5 0 1 2 3 4', '4 5 0 1 2 3', false),
+(115, '2\n1 0', '0 1', true),
+
+-- 116: Element Appearing More Than 25% in a Sorted Array
 (116, '9\n1 2 2 6 6 6 6 7 10', '6', false),
+(116, '4\n1 1 2 2', '1', false),
+(116, '1\n1', '1', true),
+
+-- 117: Search Insert Position
 (117, '4\n1 3 5 6\n5', '2', false),
+(117, '4\n1 3 5 6\n2', '1', false),
+(117, '4\n1 3 5 6\n7', '4', true),
+
+-- 118: Move Zeroes
 (118, '5\n0 1 0 3 12', '1 3 12 0 0', false),
+(118, '1\n0', '0', false),
+(118, '3\n2 1 0', '2 1 0', true),
+
+-- 119: Remove Element
 (119, '4\n3 2 2 3\n3', '2 2', false),
-(120, '3\n2 2 1', '1', false)
+(119, '8\n0 1 2 2 3 0 4 2\n2', '0 1 3 0 4', false),
+(119, '2\n1 1\n1', '', true),
+
+-- 120: Single Number
+(120, '3\n2 2 1', '1', false),
+(120, '5\n4 1 2 1 2', '4', false),
+(120, '1\n1', '1', true)
 ON CONFLICT DO NOTHING;
