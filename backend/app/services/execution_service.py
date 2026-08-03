@@ -1,12 +1,35 @@
-import json
-import google.generativeai as genai
+import asyncio
+import logging
 from typing import List, Optional
 from app.config import settings
 from app.models.question import TestCase
+from app.services.local_executor import LocalCodeExecutor
 
-# Initialize Gemini if key exists
-if settings.GEMINI_API_KEY:
-    genai.configure(api_key=settings.GEMINI_API_KEY)
+logger = logging.getLogger("execution_service")
+
+
+async def execute_code(
+    source_code: str,
+    language: str,
+    stdin: str = "",
+    expected_output: Optional[str] = None,
+) -> dict:
+    """
+    Execute code using local compiler/interpreter engine.
+    Returns Judge0-compatible execution result dictionary.
+    """
+    timeout = float(getattr(settings, "CODE_TIMEOUT_SECONDS", 5))
+
+    # Run blocking execution in thread pool to maintain async responsiveness
+    res = await asyncio.to_thread(
+        LocalCodeExecutor.execute,
+        source_code=source_code,
+        language=language,
+        stdin=stdin,
+        expected_output=expected_output,
+        timeout=timeout,
+    )
+    return res
 
 
 async def run_against_test_cases(
@@ -15,129 +38,44 @@ async def run_against_test_cases(
     test_cases: List[TestCase],
 ) -> List[dict]:
     """
-    Run code mentally via Gemini API against multiple test cases.
-    Returns list of results.
+    Run code against test cases.
+    Note: Temporary requirement 5 & 6 specifies ignoring hidden test cases.
+    Evaluates against the primary public / sample expected output.
     """
-    if not settings.GEMINI_API_KEY:
-        return [{
-            "test_case_id": tc.id,
-            "passed": False,
-            "input": tc.input,
-            "expected_output": tc.expected_output,
-            "actual_output": "",
-            "execution_time": 0,
-            "memory_used": 0,
-            "status": "error",
-            "error": "GEMINI_API_KEY is not configured in the backend environment.",
-            "is_hidden": tc.is_hidden,
-        } for tc in test_cases]
+    results = []
 
-    # Structure test cases for Gemini
-    tc_data = [
-        {
-            "index": i,
-            "input": tc.input,
-            "expected_output": tc.expected_output
-        }
-        for i, tc in enumerate(test_cases)
-    ]
+    if not test_cases:
+        return results
 
-    prompt = f"""You are a strict programming judge. Execute the student's code mentally against the provided test cases.
+    # Temporarily ignore hidden test cases
+    visible_test_cases = [tc for tc in test_cases if not getattr(tc, "is_hidden", False)]
+    test_cases_to_run = visible_test_cases if visible_test_cases else [test_cases[0]]
 
-Language: {language}
-Student Code:
-```
-{source_code}
-```
+    for tc in test_cases_to_run:
+        result = await execute_code(
+            source_code=source_code,
+            language=language,
+            stdin=tc.input or "",
+            expected_output=tc.expected_output or "",
+        )
 
-Test Cases:
-{json.dumps(tc_data, indent=2)}
+        actual_output = (result.get("output") or "").strip()
+        expected = (tc.expected_output or "").strip()
 
-Respond ONLY with a raw JSON object (no markdown, no backticks). Format:
-{{
-  "compilation_status": "success" | "error",
-  "compilation_error": "error message if any, else empty",
-  "results": [
-    {{
-      "test_case_index": 0,
-      "passed": true | false,
-      "output": "actual stdout",
-      "expected_output": "expected output",
-      "error": "runtime error if any"
-    }}
-  ]
-}}"""
+        # Passed iff status is 'accepted' AND actual output matches expected output after trim()
+        passed = (result.get("status") == "accepted") and (actual_output == expected)
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    
-    try:
-        # We use generate_content since this is sync over network, but we wrap it in a thread if needed,
-        # or use Async wrapper if provided by python SDK. 
-        # For genai, generate_content_async is available.
-        response = await model.generate_content_async(prompt)
-        text = response.text.strip()
-        
-        if text.startswith('```json'):
-            text = text.replace('```json', '', 1)
-        if text.startswith('```'):
-            text = text.replace('```', '', 1)
-        if text.endswith('```'):
-            text = text[:-3].strip()
-            
-        parsed = json.loads(text)
-    except Exception as e:
-        print(f"Gemini evaluation error: {e}")
-        return [{
-            "test_case_id": tc.id,
-            "passed": False,
-            "input": tc.input,
-            "expected_output": tc.expected_output,
-            "actual_output": "",
-            "execution_time": 0,
-            "memory_used": 0,
-            "status": "error",
-            "error": f"Failed to parse Gemini response: {e}",
-            "is_hidden": tc.is_hidden,
-        } for tc in test_cases]
-
-    compilation_error = parsed.get("compilation_error", "")
-    
-    final_results = []
-    for i, tc in enumerate(test_cases):
-        res = next((r for r in parsed.get("results", []) if r.get("test_case_index") == i), None)
-        
-        if parsed.get("compilation_status") == "error":
-            passed = False
-            status = "compilation_error"
-            error = compilation_error
-            actual_output = ""
-        elif not res:
-            passed = False
-            status = "error"
-            error = "Gemini failed to evaluate this test case."
-            actual_output = ""
-        else:
-            passed = res.get("passed", False)
-            error = res.get("error", "")
-            actual_output = res.get("output", "")
-            if error:
-                status = "runtime_error"
-            elif not passed:
-                status = "wrong_answer"
-            else:
-                status = "accepted"
-
-        final_results.append({
+        results.append({
             "test_case_id": tc.id,
             "passed": passed,
             "input": tc.input,
             "expected_output": tc.expected_output,
             "actual_output": actual_output,
-            "execution_time": 0.1,  # Mocked
-            "memory_used": 1024,    # Mocked
-            "status": status,
-            "error": error,
-            "is_hidden": tc.is_hidden,
+            "execution_time": result.get("execution_time", 0.0),
+            "memory_used": result.get("memory_used", 0),
+            "status": result.get("status", "error"),
+            "error": result.get("error", ""),
+            "is_hidden": getattr(tc, "is_hidden", False),
         })
 
-    return final_results
+    return results

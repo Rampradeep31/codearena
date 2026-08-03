@@ -367,8 +367,6 @@ export default function ExamInterface() {
     return `${m}:${String(sec).padStart(2, '0')}`;
   };
 
-  const currentQ = questions[currentIdx];
-
   if (loading) return (
     <div className="min-h-screen bg-dark-950 flex items-center justify-center">
       <div className="text-center">
