@@ -28,6 +28,50 @@ def _find_python_cmd() -> str:
     return sys.executable
 
 
+def _find_javac() -> Optional[str]:
+    """Detect available javac compiler command."""
+    if shutil.which("javac"):
+        return "javac"
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        candidate = os.path.join(java_home, "bin", "javac.exe" if sys.platform == "win32" else "javac")
+        if os.path.exists(candidate):
+            return candidate
+    if sys.platform == "win32":
+        oracle_path = r"C:\Program Files\Common Files\Oracle\Java\javapath\javac.exe"
+        if os.path.exists(oracle_path):
+            return oracle_path
+        jdk_dir = r"C:\Program Files\Java"
+        if os.path.exists(jdk_dir):
+            for folder in os.listdir(jdk_dir):
+                candidate = os.path.join(jdk_dir, folder, "bin", "javac.exe")
+                if os.path.exists(candidate):
+                    return candidate
+    return None
+
+
+def _find_java() -> Optional[str]:
+    """Detect available java runtime command."""
+    if shutil.which("java"):
+        return "java"
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        candidate = os.path.join(java_home, "bin", "java.exe" if sys.platform == "win32" else "java")
+        if os.path.exists(candidate):
+            return candidate
+    if sys.platform == "win32":
+        oracle_path = r"C:\Program Files\Common Files\Oracle\Java\javapath\java.exe"
+        if os.path.exists(oracle_path):
+            return oracle_path
+        jdk_dir = r"C:\Program Files\Java"
+        if os.path.exists(jdk_dir):
+            for folder in os.listdir(jdk_dir):
+                candidate = os.path.join(jdk_dir, folder, "bin", "java.exe")
+                if os.path.exists(candidate):
+                    return candidate
+    return None
+
+
 def extract_java_class_name(source_code: str) -> str:
     """Extract public class name or first class name from Java source code, defaulting to 'Main'."""
     public_match = re.search(r"public\s+class\s+([A-Za-z_][A-Za-z0-9_]*)", source_code)
@@ -39,134 +83,7 @@ def extract_java_class_name(source_code: str) -> str:
     return "Main"
 
 
-def _transpile_to_python(source_code: str, language: str) -> str:
-    """
-    Fallback lightweight transpiler for Java, C, and C++ when system compilers are missing.
-    Converts standard IO and loops to Python equivalent.
-    """
-    py_header = [
-        "import sys, math",
-        "_input_tokens = sys.stdin.read().split()",
-        "_input_idx = 0",
-        "def _next_token():",
-        "    global _input_idx",
-        "    if _input_idx < len(_input_tokens):",
-        "        tok = _input_tokens[_input_idx]",
-        "        _input_idx += 1",
-        "        return tok",
-        "    return ''",
-        "def _next_int():",
-        "    tok = _next_token()",
-        "    return int(tok) if tok else 0",
-        "def _next_float():",
-        "    tok = _next_token()",
-        "    return float(tok) if tok else 0.0",
-        "",
-        "class StringBuilder:",
-        "    def __init__(self, s=''): self.s = [str(s)] if s else []",
-        "    def append(self, s): self.s.append(str(s)); return self",
-        "    def reverse(self): self.s = [''.join(self.s)[::-1]]; return self",
-        "    def toString(self): return ''.join(self.s)",
-        "    def __str__(self): return ''.join(self.s)",
-        "",
-        "def _user_main():",
-    ]
-
-    body = []
-    lines = source_code.splitlines()
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped in ("{", "}", "};"):
-            continue
-
-        # Convert // comments to #
-        if "//" in stripped:
-            stripped = re.sub(r"//(.*)", r"#\1", stripped)
-
-        # Skip headers, imports, class boilerplate, return statements
-        if (
-            stripped.startswith("package ")
-            or stripped.startswith("import ")
-            or stripped.startswith("#include")
-            or stripped.startswith("using namespace")
-            or stripped.startswith("return 0")
-            or stripped.startswith("return;")
-        ):
-            continue
-        if re.match(r"(public\s+)?class\s+", stripped):
-            continue
-        if "public static void main" in stripped or "int main(" in stripped or "void main(" in stripped:
-            continue
-
-        line_sub = stripped
-
-        # Convert Java/C++ true/false literals
-        line_sub = re.sub(r"\btrue\b", "True", line_sub)
-        line_sub = re.sub(r"\bfalse\b", "False", line_sub)
-
-        # System.out.println / print
-        line_sub = re.sub(r"System\.out\.println\s*\((.*?)\)\s*;", r"print(str(\1).lower() if isinstance(\1, bool) else \1)", line_sub)
-        line_sub = re.sub(r"System\.out\.print\s*\((.*?)\)\s*;", r"print(str(\1).lower() if isinstance(\1, bool) else \1, end='')", line_sub)
-
-        # C++ cout / cin
-        line_sub = re.sub(r"\s*<<\s*(?:std::)?endl", "", line_sub)
-        line_sub = re.sub(r"(?:std::)?cout\s*<<\s*(.*?)\s*;\s*$", r"print(str(\1).lower() if isinstance(\1, bool) else \1)", line_sub)
-
-        # System.out.printf and printf
-        if "printf" in line_sub:
-            line_sub = re.sub(r"System\.out\.printf\s*\(", "printf(", line_sub)
-            m_args = re.search(r"printf\s*\(\s*\"(.*?)\"\s*,\s*(.*?)\)\s*;", line_sub)
-            m_noargs = re.search(r"printf\s*\(\s*\"(.*?)\"\s*\)\s*;", line_sub)
-            if m_args:
-                fmt_str, args_str = m_args.group(1), m_args.group(2)
-                fmt_str = fmt_str.replace("%n", "\\n")
-                has_newline = False
-                if fmt_str.endswith(r"\n") or fmt_str.endswith("\n"):
-                    has_newline = True
-                    fmt_str = fmt_str[:-2] if fmt_str.endswith(r"\n") else fmt_str[:-1]
-                end_clause = "" if has_newline else ", end=''"
-                fmt_py = re.sub(r"%[-+ 0]*\d*(?:\.\d+)?[a-zA-Z%]", "{}", fmt_str)
-                line_sub = f"print(\"{fmt_py}\".format({args_str}){end_clause})"
-            elif m_noargs:
-                fmt_str = m_noargs.group(1).replace("%n", "\\n")
-                has_newline = False
-                if fmt_str.endswith(r"\n") or fmt_str.endswith("\n"):
-                    has_newline = True
-                    fmt_str = fmt_str[:-2] if fmt_str.endswith(r"\n") else fmt_str[:-1]
-                end_clause = "" if has_newline else ", end=''"
-                fmt_py = re.sub(r"%[-+ 0]*\d*(?:\.\d+)?[a-zA-Z%]", "{}", fmt_str)
-                line_sub = f"print(\"{fmt_py}\"{end_clause})"
-
-        # Scanner / cin / scanf
-        line_sub = re.sub(r"Scanner\s+\w+\s*=\s*new\s+Scanner\s*\(.*?\)\s*;", "", line_sub)
-        line_sub = re.sub(r"\b\w+\.nextInt\(\)", "_next_int()", line_sub)
-        line_sub = re.sub(r"\b\w+\.nextDouble\(\)", "_next_float()", line_sub)
-        line_sub = re.sub(r"\b\w+\.next\(\)", "_next_token()", line_sub)
-
-        # Remove 'new ' keyword for object instantiation
-        line_sub = re.sub(r"\bnew\s+", "", line_sub)
-
-        # Simple variable declaration replacement: int n = ... -> n = ...
-        line_sub = re.sub(r"\b(int|long|double|float|String|char|bool|boolean|auto|StringBuilder)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", r"\2 =", line_sub)
-
-        # Arrays: int[] nums = new int[n]; -> nums = [0] * (n)
-        line_sub = re.sub(r"\b(int|long|double|float|String|boolean)\[\]\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\w+\[(.*?)\]\s*;", r"\2 = [0] * (\3)", line_sub)
-
-        # Clean trailing semicolons
-        if line_sub.strip().endswith(";") and not line_sub.strip().startswith("for"):
-            line_sub = line_sub.rstrip(";")
-
-        body.append("    " + line_sub)
-
-    if not body:
-        body.append("    pass")
-
-    body.append("\nif __name__ == '__main__':\n    _user_main()")
-    return "\n".join(py_header + body)
-
-
-class LocalCodeExecutor:
+class LocalExecutor:
     """Local compiler and code execution engine for Java, Python, C, and C++."""
 
     @staticmethod
@@ -298,11 +215,6 @@ class LocalCodeExecutor:
     ) -> tuple[str, str, int, float, bool]:
         """Execute a subprocess with stdin, stdout, stderr capture and timeout protection."""
         start_time = time.perf_counter()
-        timed_out = False
-        stdout_str = ""
-        stderr_str = ""
-        exit_code = -1
-
         try:
             process = subprocess.Popen(
                 cmd,
@@ -311,30 +223,23 @@ class LocalCodeExecutor:
                 stderr=subprocess.PIPE,
                 text=True,
                 cwd=cwd,
+                encoding="utf-8",
+                errors="replace",
             )
+            stdout, stderr = process.communicate(input=stdin_data, timeout=timeout)
+            exec_time = time.perf_counter() - start_time
+            return stdout, stderr, process.returncode, exec_time, False
+        except subprocess.TimeoutExpired:
+            exec_time = time.perf_counter() - start_time
             try:
-                stdout_str, stderr_str = process.communicate(input=stdin_data, timeout=timeout)
-                exit_code = process.returncode
-            except subprocess.TimeoutExpired:
-                timed_out = True
                 process.kill()
-                stdout_str, stderr_str = process.communicate()
-                exit_code = -1
+                process.wait()
+            except Exception:
+                pass
+            return "", "Time Limit Exceeded", 124, exec_time, True
         except Exception as e:
-            stderr_str = str(e)
-            exit_code = 1
-
-        exec_time = time.perf_counter() - start_time
-        return stdout_str, stderr_str, exit_code, exec_time, timed_out
-
-    @classmethod
-    def _run_fallback(
-        cls, source_code: str, language: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
-    ) -> Dict[str, Any]:
-        """Run fallback execution for Java/C/C++ when system compiler is missing."""
-        logger.info(f"Using fallback interpreter runner for {language}")
-        py_code = _transpile_to_python(source_code, language)
-        return cls._run_python(py_code, stdin, expected_output, timeout, temp_dir)
+            exec_time = time.perf_counter() - start_time
+            return "", str(e), 1, exec_time, False
 
     @classmethod
     def _run_python(
@@ -345,7 +250,7 @@ class LocalCodeExecutor:
             f.write(source_code)
 
         python_cmd = _find_python_cmd()
-        cmd = [python_cmd, "solution.py"]
+        cmd = [python_cmd, py_file]
 
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
             cmd, stdin, timeout, temp_dir
@@ -370,8 +275,21 @@ class LocalCodeExecutor:
     def _run_java(
         cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str
     ) -> Dict[str, Any]:
-        if not shutil.which("javac") or not shutil.which("java"):
-            return cls._run_fallback(source_code, "java", stdin, expected_output, timeout, temp_dir)
+        javac_bin = _find_javac()
+        java_bin = _find_java()
+
+        if not javac_bin or not java_bin:
+            err_msg = "Java compiler (javac) or runtime (java) is not installed on this server environment."
+            return cls._evaluate_result(
+                stdout="",
+                stderr=err_msg,
+                compile_output=err_msg,
+                exit_code=1,
+                exec_time=0.0,
+                timed_out=False,
+                expected_output=expected_output,
+                is_compilation_failure=True,
+            )
 
         class_name = extract_java_class_name(source_code)
         java_file = os.path.join(temp_dir, f"{class_name}.java")
@@ -379,7 +297,7 @@ class LocalCodeExecutor:
             f.write(source_code)
 
         # Step 1: Compile
-        compile_cmd = ["javac", f"{class_name}.java"]
+        compile_cmd = [javac_bin, f"{class_name}.java"]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
             compile_cmd, "", timeout, temp_dir
         )
@@ -397,7 +315,7 @@ class LocalCodeExecutor:
             )
 
         # Step 2: Run
-        run_cmd = ["java", "-cp", temp_dir, class_name]
+        run_cmd = [java_bin, "-cp", temp_dir, class_name]
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
             run_cmd, stdin, timeout, temp_dir
         )
@@ -419,7 +337,17 @@ class LocalCodeExecutor:
     ) -> Dict[str, Any]:
         gcc_bin = shutil.which("gcc")
         if not gcc_bin:
-            return cls._run_fallback(source_code, "c", stdin, expected_output, timeout, temp_dir)
+            err_msg = "C compiler (gcc) is not installed on this server environment."
+            return cls._evaluate_result(
+                stdout="",
+                stderr=err_msg,
+                compile_output=err_msg,
+                exit_code=1,
+                exec_time=0.0,
+                timed_out=False,
+                expected_output=expected_output,
+                is_compilation_failure=True,
+            )
 
         c_file = os.path.join(temp_dir, "solution.c")
         with open(c_file, "w", encoding="utf-8") as f:
@@ -469,7 +397,17 @@ class LocalCodeExecutor:
     ) -> Dict[str, Any]:
         gpp_bin = shutil.which("g++")
         if not gpp_bin:
-            return cls._run_fallback(source_code, "cpp", stdin, expected_output, timeout, temp_dir)
+            err_msg = "C++ compiler (g++) is not installed on this server environment."
+            return cls._evaluate_result(
+                stdout="",
+                stderr=err_msg,
+                compile_output=err_msg,
+                exit_code=1,
+                exec_time=0.0,
+                timed_out=False,
+                expected_output=expected_output,
+                is_compilation_failure=True,
+            )
 
         cpp_file = os.path.join(temp_dir, "solution.cpp")
         with open(cpp_file, "w", encoding="utf-8") as f:
