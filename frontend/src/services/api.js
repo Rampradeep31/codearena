@@ -274,9 +274,20 @@ export const studentAPI = {
 
     const userKey = getUserKey(currentUser);
 
+    // Year label of the logged-in student ("Second Year"/"Third Year") used to
+    // scope test visibility; null when the year is unknown (no filtering).
+    const yearLabel = currentUser?.year
+      ? ({ 2: 'Second Year', 3: 'Third Year' })[Number(currentUser.year)]
+      : null;
+
     try {
       const res = await backendApi.get('/student/tests');
-      if (res.data) return res;
+      const data = res?.data;
+      // Trust the backend only when it actually returned tests. An empty/stale
+      // backend response would otherwise hide every test from the dashboard.
+      if (data && (data.active?.length || data.upcoming?.length || data.completed?.length)) {
+        return res;
+      }
     } catch (e) {
       console.warn('Backend API getTests error, trying Supabase/local:', e);
     }
@@ -299,6 +310,10 @@ export const studentAPI = {
         const upcoming = [];
 
         for (const t of dbTests) {
+          // Show only tests meant for the student's academic year. Tests with an
+          // unset year remain visible to every student.
+          if (yearLabel && t.year && t.year !== yearLabel) continue;
+
           let testData = {
             id: t.id,
             name: t.name,
@@ -362,6 +377,9 @@ export const studentAPI = {
             upcoming.push(testData);
           } else if (endTime >= now) {
             active.push(testData);
+          } else {
+            // Window ended without a submission: the test is no longer actionable.
+            completed.push(testData);
           }
         }
 
@@ -374,6 +392,8 @@ export const studentAPI = {
     // Default Fallback with User-Scoped Local Storage Status Check
     const localInfo = getLocalStatus(1);
     const isSubmitted = isCompletedAttemptStatus(localInfo.status);
+    // The seeded fallback test is a Second Year exam: keep it away from other years.
+    const fallbackAllowed = !yearLabel || yearLabel === 'Second Year';
 
     const fallbackTest = {
       id: 1,
@@ -393,9 +413,9 @@ export const studentAPI = {
 
     return {
       data: {
-        active: isSubmitted ? [] : [fallbackTest],
+        active: fallbackAllowed && !isSubmitted ? [fallbackTest] : [],
         upcoming: [],
-        completed: isSubmitted ? [fallbackTest] : []
+        completed: fallbackAllowed && isSubmitted ? [fallbackTest] : []
       }
     };
   },

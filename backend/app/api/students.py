@@ -63,10 +63,15 @@ async def get_student_tests(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_student),
 ):
-    """Get tests categorized as upcoming, active, completed."""
+    """Get tests categorized as upcoming, active, completed, scoped to the student's year."""
     now = datetime.now(timezone.utc)
 
-    result = await db.execute(select(Test).order_by(Test.start_time.desc()))
+    year_label = {2: "Second Year", 3: "Third Year"}.get(user.year)
+
+    query = select(Test).order_by(Test.start_time.desc())
+    if year_label:
+        query = query.where(Test.year == year_label)
+    result = await db.execute(query)
     tests = result.scalars().all()
 
     upcoming = []
@@ -91,6 +96,7 @@ async def get_student_tests(
             "id": t.id,
             "name": t.name,
             "description": t.description,
+            "year": t.year,
             "start_time": ensure_aware(t.start_time).isoformat(),
             "end_time": ensure_aware(t.end_time).isoformat(),
             "duration_minutes": t.duration_minutes,
@@ -122,6 +128,10 @@ async def get_student_tests(
         elif ensure_aware(t.end_time) >= now:
             test_data["status"] = "active"
             active.append(test_data)
+        else:
+            # Window ended without a submission: the test is no longer actionable.
+            test_data["status"] = "completed"
+            completed.append(test_data)
 
     return {"upcoming": upcoming, "active": active, "completed": completed}
 
