@@ -437,7 +437,10 @@ export const studentAPI = {
       }
     ];
 
-    const fallbackMapped = fallbackQuestions.map((q, idx) => {
+    const countToUse = typeof questionsPerStudent === 'number' && questionsPerStudent > 0 ? questionsPerStudent : 1;
+    const slicedFallback = fallbackQuestions.slice(0, countToUse);
+
+    const fallbackMapped = slicedFallback.map((q, idx) => {
       const savedCode = localStorage.getItem(`code_${attemptId}_${q.id}`) || '';
       const savedLanguage = localStorage.getItem(`lang_${attemptId}_${q.id}`) || 'python';
       return {

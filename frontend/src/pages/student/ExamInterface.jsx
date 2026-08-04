@@ -191,13 +191,6 @@ export default function ExamInterface() {
       }
     };
 
-    const handleBlur = () => {
-      if (Date.now() - mountTime.current < 2000) return;
-      if (!document.hidden) {
-        recordViolation('window_blur');
-      }
-    };
-
     const handleFullscreenChange = () => {
       const currentlyFullscreen = !!document.fullscreenElement;
       setIsFullscreen(currentlyFullscreen);
@@ -210,12 +203,10 @@ export default function ExamInterface() {
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('blur', handleBlur);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('blur', handleBlur);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
   }, [attemptId]);
