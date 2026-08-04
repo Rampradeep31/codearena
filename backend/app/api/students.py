@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.exc import IntegrityError
 from app.database.connection import get_db
 from app.config import settings
@@ -70,7 +70,10 @@ async def get_student_tests(
 
     query = select(Test).order_by(Test.start_time.desc())
     if year_label:
-        query = query.where(Test.year == year_label)
+        # Match the frontend Supabase fallback: tests with an unset year remain
+        # visible to every year instead of being silently dropped (which made
+        # ACTIVE assignments disappear from the dashboard).
+        query = query.where(or_(Test.year == year_label, Test.year.is_(None)))
     result = await db.execute(query)
     tests = result.scalars().all()
 
@@ -114,9 +117,19 @@ async def get_student_tests(
             test_data["attempt_submitted_at"] = attempt.submitted_at.isoformat() if attempt.submitted_at else None
 
         attempt_status = _status_value(attempt.status) if attempt else None
-        is_submitted = attempt_status in (
-            AttemptStatus.SUBMITTED.value,
-            AttemptStatus.AUTO_SUBMITTED.value,
+        # Requirement 7: an attempt is completed when its status is a completed
+        # status OR when submitted_at is stamped (manual submit & auto-submit
+        # both set it). Existence of an attempt row alone never means completed.
+        is_submitted = (
+            attempt is not None
+            and (
+                attempt_status in (
+                    AttemptStatus.SUBMITTED.value,
+                    AttemptStatus.AUTO_SUBMITTED.value,
+                    "completed",
+                )
+                or attempt.submitted_at is not None
+            )
         )
 
         if is_submitted:

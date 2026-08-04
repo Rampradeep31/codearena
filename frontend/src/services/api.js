@@ -79,11 +79,18 @@ const getStudentLocalTestMetadata = () => {
   } catch (e) { return {}; }
 };
 
-const COMPLETED_ATTEMPT_STATUSES = new Set(['submitted', 'auto_submitted']);
+const COMPLETED_ATTEMPT_STATUSES = new Set(['submitted', 'auto_submitted', 'completed']);
 const ACTIVE_ATTEMPT_STATUS = 'in_progress';
 
 const normalizeAttemptStatus = (status) => String(status || '').toLowerCase();
 const isCompletedAttemptStatus = (status) => COMPLETED_ATTEMPT_STATUSES.has(normalizeAttemptStatus(status));
+
+// Requirement 7: an attempt is also completed when a submitted_at timestamp is
+// present (manual submit and auto-submit both stamp it). Existence of an
+// attempt row alone NEVER implies completion (requirement 9).
+const hasSubmittedTimestamp = (submittedAt) => {
+  return submittedAt !== null && submittedAt !== undefined && String(submittedAt).trim() !== '';
+};
 
 const getCurrentUser = () => {
   try {
@@ -304,6 +311,8 @@ export const studentAPI = {
 
     try {
       const { data: dbTests, error } = await supabase.from('tests').select('*');
+      // ─── DEBUG (requirement 3): RAW Supabase rows BEFORE any frontend filtering ───
+      console.log('[studentAPI.getTests] RAW tests rows (from Supabase, pre-filter):', JSON.stringify(dbTests));
       if (!error && dbTests && dbTests.length > 0) {
         const active = [];
         const completed = [];
@@ -327,15 +336,20 @@ export const studentAPI = {
             end_time: t.end_time
           };
 
-          // 1. User-Scoped Local Storage Check
-          const localInfo = getLocalStatus(t.id);
-          if (isCompletedAttemptStatus(localInfo.status)) {
-            testData.attempt_status = localInfo.status;
-            testData.attempt_submitted_at = localInfo.submittedAt;
-            if (localInfo.attemptId) testData.attempt_id = localInfo.attemptId;
-          }
+          // ── Attempt classification rules (requirements 7, 8, 9) ────────────
+          // An assessment is COMPLETED only when the attempt row itself proves it:
+          // status in {submitted, auto_submitted, completed} OR a non-null
+          // submitted_at (manual submit and auto-submit both stamp it). The mere
+          // EXISTENCE of an attempt record never marks a test completed (req 9).
+          // The Supabase attempt row is the source of truth; the user-scoped
+          // local cache is only a last-resort fallback when the Supabase query
+          // itself fails.
 
-          // 2. Supabase User-Scoped Attempt Check
+          // 1. Supabase Attempt Check (source of truth)
+          const localInfo = getLocalStatus(t.id);
+          let dbAttempt = null;
+          let attemptsFetched = false;
+
           if (currentUser) {
             try {
               const { data: attempts } = await supabase
@@ -344,21 +358,13 @@ export const studentAPI = {
                 .eq('test_id', t.id)
                 .order('id', { ascending: false });
 
+              // ─── DEBUG (req 3): RAW attempt rows for this test BEFORE filtering ───
+              console.log(`[studentAPI.getTests] RAW test_attempts rows for test #${t.id} (pre-filter):`, JSON.stringify(attempts || []));
+
+              attemptsFetched = true;
               if (attempts && attempts.length > 0) {
                 // STRICTLY match only this current logged-in user
-                const userAttempt = attempts.find(a => attemptBelongsToUser(a, currentUser));
-                
-                if (userAttempt) {
-                  testData.attempt_id = userAttempt.id;
-                  const authoritativeStatus = normalizeAttemptStatus(userAttempt.status);
-                  if (isCompletedAttemptStatus(authoritativeStatus)) {
-                    testData.attempt_status = authoritativeStatus;
-                    testData.attempt_submitted_at = userAttempt.submitted_at || localInfo.submittedAt;
-                  } else {
-                    testData.attempt_status = authoritativeStatus || ACTIVE_ATTEMPT_STATUS;
-                    testData.attempt_submitted_at = userAttempt.submitted_at;
-                  }
-                }
+                dbAttempt = attempts.find(a => attemptBelongsToUser(a, currentUser)) || null;
               }
             } catch (attErr) {
               console.warn("Supabase attempts fetch warning:", attErr);
@@ -369,7 +375,40 @@ export const studentAPI = {
           const startTime = new Date(t.start_time || Date.now());
           const endTime = new Date(t.end_time || (Date.now() + 7 * 24 * 3600 * 1000));
 
-          const isSubmitted = isCompletedAttemptStatus(testData.attempt_status);
+          if (dbAttempt) {
+            // DB attempt exists for THIS student: it decides classification.
+            testData.attempt_id = dbAttempt.id;
+            testData.attempt_submitted_at = dbAttempt.submitted_at || null;
+            const dbStatus = normalizeAttemptStatus(dbAttempt.status);
+            if (isCompletedAttemptStatus(dbStatus) || hasSubmittedTimestamp(dbAttempt.submitted_at)) {
+              // Completed statuses include 'submitted', 'auto_submitted' and
+              // 'completed' (the dashboard card helpers handle all three).
+              testData.attempt_status = dbStatus || 'submitted';
+            } else {
+              testData.attempt_status = dbStatus || ACTIVE_ATTEMPT_STATUS;
+            }
+          } else if (isCompletedAttemptStatus(localInfo.status)) {
+            // No Supabase attempt for this student, but the user-scoped cache
+            // holds a completed status VALUE written by finishTest when a real
+            // submission occurred (including when the Supabase write itself
+            // failed). The cache stores an actual status, never bare attempt
+            // existence, so honoring it complies with req 9 and keeps a
+            // finished test from reappearing as Active (reqs 7 & 8).
+            testData.attempt_status = localInfo.status;
+            testData.attempt_submitted_at = localInfo.submittedAt;
+            if (localInfo.attemptId) testData.attempt_id = localInfo.attemptId;
+          } else if (attemptsFetched) {
+            // Supabase is reachable, holds NO attempt, and there is no
+            // completed cache: the test is shown per its window, so an
+            // in-window assignment with no completed attempt stays ACTIVE
+            // (req 8). No completion is inferred here.
+            testData.attempt_id = null;
+            testData.attempt_status = null;
+            testData.attempt_submitted_at = null;
+          }
+
+          const isSubmitted = isCompletedAttemptStatus(testData.attempt_status)
+            || hasSubmittedTimestamp(testData.attempt_submitted_at);
 
           if (isSubmitted) {
             completed.push(testData);

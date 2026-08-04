@@ -31,7 +31,7 @@ export default function StudentDashboard() {
     const isActive = type === 'active';
     const isCompleted = type === 'completed';
     const hasAttempt = !!test.attempt_id;
-    const isSubmitted = test.attempt_status === 'submitted' || test.attempt_status === 'auto_submitted';
+    const isSubmitted = test.attempt_status === 'submitted' || test.attempt_status === 'auto_submitted' || test.attempt_status === 'completed';
 
     return (
       <div className="surface-card interactive-card rounded-2xl p-5">
