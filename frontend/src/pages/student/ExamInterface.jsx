@@ -447,7 +447,12 @@ export default function ExamInterface() {
         source_code: code,
       });
       
-      // Update UI to indicate successful submission without revealing test case details
+      // Show submit results in the modal (hidden test case inputs are already redacted by the backend)
+      setRunResult({ ...result, language });
+      const firstFail = result?.results?.findIndex(r => !r.passed);
+      setActiveCaseIdx(firstFail !== undefined && firstFail !== -1 ? firstFail : 0);
+
+      // Update UI to indicate successful submission
       setQuestions(prev => {
         const newQs = [...prev];
         if (newQs[currentIdx]) {
@@ -457,13 +462,7 @@ export default function ExamInterface() {
       });
       
       const verdict = getVerdict(result) || 'Submitted';
-      toast.success(`Code submitted — ${verdict}`);
-      
-      // Optionally move to next unsubmitted question
-      const nextIdx = questions.findIndex((q, idx) => idx > currentIdx && !q.is_submitted);
-      if (nextIdx !== -1) {
-        switchQuestion(nextIdx);
-      }
+      toast.success(`Code submitted — Score: ${result.score ?? 0}/${result.total_marks ?? 0} — ${verdict}`);
     } catch (err) {
       if (err?.status === 401 || err?.status === 403) {
         toast.error(getErrorMessage(err, 'Session expired. Please log in again.'));
@@ -896,7 +895,7 @@ export default function ExamInterface() {
                           <div>
                             <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
                             <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                              {runResult.results[activeCaseIdx].input || qData?.test_cases?.[activeCaseIdx]?.input || 'None'}
+                              {runResult.results[activeCaseIdx].input !== undefined && runResult.results[activeCaseIdx].input !== null && runResult.results[activeCaseIdx].input !== "" ? runResult.results[activeCaseIdx].input : (qData?.test_cases?.[activeCaseIdx]?.input ? qData.test_cases[activeCaseIdx].input : '(Empty)')}
                             </pre>
                           </div>
                           <div>

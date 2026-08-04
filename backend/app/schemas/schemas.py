@@ -343,6 +343,7 @@ class TestCaseResult(BaseModel):
     execution_time: Optional[float] = None
     memory_used: Optional[int] = None
     status: str = ""
+    error: Optional[str] = None
 
 
 class CodeRunResponse(BaseModel):
@@ -359,6 +360,7 @@ class CodeSubmitResponse(BaseModel):
     passed_test_cases: int
     total_test_cases: int
     status: str  # "accepted", "partial", "wrong_answer", "compilation_error"
+    results: List[TestCaseResult] = []
 
 
 # ─── Violation ────────────────────────────────────────

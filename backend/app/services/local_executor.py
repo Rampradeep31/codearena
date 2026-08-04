@@ -167,12 +167,13 @@ def _find_javac() -> Optional[str]:
         oracle_path = r"C:\Program Files\Common Files\Oracle\Java\javapath\javac.exe"
         if os.path.exists(oracle_path):
             return oracle_path
-        jdk_dir = r"C:\Program Files\Java"
-        if os.path.exists(jdk_dir):
-            for folder in os.listdir(jdk_dir):
-                candidate = os.path.join(jdk_dir, folder, "bin", "javac.exe")
-                if os.path.exists(candidate):
-                    return candidate
+        jdk_dirs = [r"C:\Program Files\Java", r"C:\Program Files\Eclipse Adoptium"]
+        for base_dir in jdk_dirs:
+            if os.path.exists(base_dir):
+                for folder in os.listdir(base_dir):
+                    candidate = os.path.join(base_dir, folder, "bin", "javac.exe")
+                    if os.path.exists(candidate):
+                        return candidate
     return None
 
 
@@ -189,12 +190,13 @@ def _find_java() -> Optional[str]:
         oracle_path = r"C:\Program Files\Common Files\Oracle\Java\javapath\java.exe"
         if os.path.exists(oracle_path):
             return oracle_path
-        jdk_dir = r"C:\Program Files\Java"
-        if os.path.exists(jdk_dir):
-            for folder in os.listdir(jdk_dir):
-                candidate = os.path.join(jdk_dir, folder, "bin", "java.exe")
-                if os.path.exists(candidate):
-                    return candidate
+        jdk_dirs = [r"C:\Program Files\Java", r"C:\Program Files\Eclipse Adoptium"]
+        for base_dir in jdk_dirs:
+            if os.path.exists(base_dir):
+                for folder in os.listdir(base_dir):
+                    candidate = os.path.join(base_dir, folder, "bin", "java.exe")
+                    if os.path.exists(candidate):
+                        return candidate
     return None
 
 

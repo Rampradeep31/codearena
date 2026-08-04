@@ -119,19 +119,130 @@ async def _require_assigned_question(db: AsyncSession, attempt_id: int, question
             pass
 
 
+FALLBACK_TEST_CASES = {
+    101: [
+        {"id": 1011, "input": "4\n2 7 11 15\n9", "expected_output": "0 1", "is_hidden": False},
+        {"id": 1012, "input": "3\n3 2 4\n6", "expected_output": "1 2", "is_hidden": True},
+    ],
+    102: [
+        {"id": 1021, "input": "hello", "expected_output": "olleh", "is_hidden": False},
+        {"id": 1022, "input": "CodeArena", "expected_output": "anerAedoC", "is_hidden": True},
+    ],
+    103: [
+        {"id": 1031, "input": "racecar", "expected_output": "true", "is_hidden": False},
+        {"id": 1032, "input": "hello", "expected_output": "false", "is_hidden": True},
+    ],
+    104: [
+        {"id": 1041, "input": "9\n-2 1 -3 4 -1 2 1 -5 4", "expected_output": "6", "is_hidden": False},
+        {"id": 1042, "input": "1\n1", "expected_output": "1", "is_hidden": True},
+    ],
+    105: [
+        {"id": 1051, "input": "()[]{}", "expected_output": "true", "is_hidden": False},
+        {"id": 1052, "input": "(]", "expected_output": "false", "is_hidden": True},
+    ],
+    106: [
+        {"id": 1061, "input": "36.50", "expected_output": "309.65\n97.70", "is_hidden": False},
+        {"id": 1062, "input": "122.11", "expected_output": "395.26\n251.80", "is_hidden": True},
+    ],
+    107: [
+        {"id": 1071, "input": "27", "expected_output": "true", "is_hidden": False},
+        {"id": 1072, "input": "0", "expected_output": "false", "is_hidden": True},
+    ],
+    108: [
+        {"id": 1081, "input": "8", "expected_output": "2", "is_hidden": False},
+        {"id": 1082, "input": "4", "expected_output": "2", "is_hidden": True},
+    ],
+    109: [
+        {"id": 1091, "input": "3\n1 1 2", "expected_output": "1 2", "is_hidden": False},
+        {"id": 1092, "input": "10\n0 0 1 1 1 2 2 3 3 4", "expected_output": "0 1 2 3 4", "is_hidden": True},
+    ],
+    110: [
+        {"id": 1101, "input": "III", "expected_output": "3", "is_hidden": False},
+        {"id": 1102, "input": "LVIII", "expected_output": "58", "is_hidden": True},
+    ],
+    111: [
+        {"id": 1111, "input": "121", "expected_output": "true", "is_hidden": False},
+        {"id": 1112, "input": "-121", "expected_output": "false", "is_hidden": True},
+    ],
+    112: [
+        {"id": 1121, "input": "4\n3 1 2 4", "expected_output": "2 4 3 1", "is_hidden": False},
+        {"id": 1122, "input": "1\n0", "expected_output": "0", "is_hidden": True},
+    ],
+    113: [
+        {"id": 1131, "input": "3\n2 5 1 3 4 7", "expected_output": "2 3 5 4 1 7", "is_hidden": False},
+        {"id": 1132, "input": "4\n1 2 3 4 4 3 2 1", "expected_output": "1 4 2 3 3 2 4 1", "is_hidden": True},
+    ],
+    114: [
+        {"id": 1141, "input": "9\n1 1 2 3 3 4 4 8 8", "expected_output": "2", "is_hidden": False},
+        {"id": 1142, "input": "7\n3 3 7 7 10 11 11", "expected_output": "10", "is_hidden": True},
+    ],
+    115: [
+        {"id": 1151, "input": "6\n0 2 1 5 3 4", "expected_output": "0 1 2 4 5 3", "is_hidden": False},
+        {"id": 1152, "input": "5\n5 0 1 2 3 4", "expected_output": "4 5 0 1 2 3", "is_hidden": True},
+    ],
+    116: [
+        {"id": 1161, "input": "9\n1 2 2 6 6 6 6 7 10", "expected_output": "6", "is_hidden": False},
+        {"id": 1162, "input": "4\n1 1 2 2", "expected_output": "1", "is_hidden": True},
+    ],
+    117: [
+        {"id": 1171, "input": "4\n1 3 5 6\n5", "expected_output": "2", "is_hidden": False},
+        {"id": 1172, "input": "4\n1 3 5 6\n2", "expected_output": "1", "is_hidden": True},
+    ],
+    118: [
+        {"id": 1181, "input": "5\n0 1 0 3 12", "expected_output": "1 3 12 0 0", "is_hidden": False},
+        {"id": 1182, "input": "1\n0", "expected_output": "0", "is_hidden": True},
+    ],
+    119: [
+        {"id": 1191, "input": "4\n3 2 2 3\n3", "expected_output": "2 2", "is_hidden": False},
+        {"id": 1192, "input": "8\n0 1 2 2 3 0 4 2\n2", "expected_output": "0 1 3 0 4", "is_hidden": True},
+    ],
+    120: [
+        {"id": 1201, "input": "3\n2 2 1", "expected_output": "1", "is_hidden": False},
+        {"id": 1202, "input": "5\n4 1 2 1 2", "expected_output": "4", "is_hidden": True},
+    ],
+}
+
+
 async def _fetch_test_cases(db: AsyncSession, question_id: int, include_hidden: bool) -> list:
-    """Fetch test cases for a question from the database."""
+    """Fetch test cases for a question from the database or fallback mapping."""
+    rows = []
     try:
+        # 1. Try exact question_id
         tc_result = await db.execute(
             select(TestCase).where(TestCase.question_id == question_id)
         )
-        rows = tc_result.scalars().all()
-        if not include_hidden:
-            rows = [tc for tc in rows if not tc.is_hidden]
-        return list(rows)
+        rows = list(tc_result.scalars().all())
+
+        # 2. Try mapped question_id (101 -> 1, 102 -> 2)
+        if not rows and question_id >= 100:
+            mapped_id = question_id - 100
+            tc_result = await db.execute(
+                select(TestCase).where(TestCase.question_id == mapped_id)
+            )
+            rows = list(tc_result.scalars().all())
     except Exception as e:
         logger.warning(f"Failed to fetch test cases for question {question_id}: {e}")
-        return []
+
+    # 3. Fallback to dictionary if DB has no test cases
+    if not rows:
+        dict_key = question_id if question_id in FALLBACK_TEST_CASES else (question_id + 100 if (question_id + 100) in FALLBACK_TEST_CASES else None)
+        if dict_key and dict_key in FALLBACK_TEST_CASES:
+            fb_list = FALLBACK_TEST_CASES[dict_key]
+            rows = [
+                TestCase(
+                    id=item["id"],
+                    question_id=question_id,
+                    input=item["input"],
+                    expected_output=item["expected_output"],
+                    is_hidden=item["is_hidden"],
+                )
+                for item in fb_list
+            ]
+
+    if not include_hidden:
+        rows = [tc for tc in rows if not tc.is_hidden]
+
+    return rows
 
 
 async def _fetch_question(db: AsyncSession, question_id: int) -> Question:
@@ -140,6 +251,12 @@ async def _fetch_question(db: AsyncSession, question_id: int) -> Question:
         question = q_result.scalar_one_or_none()
         if question:
             return question
+
+        if question_id >= 100:
+            q_result = await db.execute(select(Question).where(Question.id == (question_id - 100)))
+            question = q_result.scalar_one_or_none()
+            if question:
+                return question
     except Exception as e:
         logger.warning(f"Failed to query Question table for id {question_id}: {e}")
 
@@ -209,6 +326,7 @@ async def run_single_case(data: CodeRunCaseRequest, user: User = Depends(require
             test_case_id=None, passed=passed, input=data.input,
             expected_output=data.expected_output, actual_output=actual_output,
             execution_time=result.get("execution_time", 0), memory_used=result.get("memory_used", 0), status=status,
+            error=result.get("error")
         )],
         passed=1 if passed else 0, total=1,
     )
@@ -231,12 +349,14 @@ async def run_code(
     await _require_assigned_question(db, data.attempt_id, data.question_id)
 
     public_test_cases = await _fetch_test_cases(db, data.question_id, include_hidden=False)
+    if public_test_cases:
+        public_test_cases = public_test_cases[:2]
 
     if not public_test_cases:
         # Fallback: if no non-hidden test cases exist, fetch the first available test case
         all_cases = await _fetch_test_cases(db, data.question_id, include_hidden=True)
         if all_cases:
-            public_test_cases = [all_cases[0]]
+            public_test_cases = all_cases[:2]
 
     if not public_test_cases:
         # Fallback: run against the question's sample input/output when defined.
@@ -293,6 +413,7 @@ async def run_code(
                 execution_time=r["execution_time"],
                 memory_used=r["memory_used"],
                 status=r["status"],
+                error=r.get("error")
             ) for r in results
         ],
         passed=passed_count,
@@ -387,10 +508,26 @@ async def submit_code(
         f"ContainerID={results[0].get('container_id') if results else None}"
     )
 
+    submit_results = []
+    for r in results:
+        is_hidden = r.get("is_hidden", False)
+        submit_results.append(TestCaseResult(
+            test_case_id=r["test_case_id"],
+            passed=r["passed"],
+            input="[Hidden]" if is_hidden else r["input"],
+            expected_output="[Hidden]" if is_hidden else r["expected_output"],
+            actual_output=r["actual_output"],
+            execution_time=r["execution_time"],
+            memory_used=r["memory_used"],
+            status=r["status"],
+            error=r.get("error")
+        ))
+
     return CodeSubmitResponse(
         score=score,
         total_marks=question.marks,
         passed_test_cases=passed_count,
         total_test_cases=total_count,
         status=status_str,
+        results=submit_results,
     )

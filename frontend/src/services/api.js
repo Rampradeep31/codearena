@@ -739,24 +739,63 @@ export const studentAPI = {
     localStorage.removeItem('codearena_attempt_submitted_at_test_1');
     localStorage.removeItem('codearena_attempt_id_test_1');
 
+    // Call the backend endpoint to calculate total_score from all submissions
+    let calculatedScore = null;
     try {
+      const backendRes = await backendApi.post(`/student/attempts/${attemptId}/finish`);
+      if (typeof backendRes.data?.total_score === 'number' && backendRes.data.total_score > 0) {
+        calculatedScore = backendRes.data.total_score;
+      }
+    } catch (e) {
+      console.warn('Backend finishTest score calculation error:', e);
+    }
+
+    // Fallback/Supplement: Calculate total score from Supabase submissions table
+    if (!calculatedScore) {
+      try {
+        const { data: allSubs } = await supabase
+          .from('submissions')
+          .select('question_id, score')
+          .eq('attempt_id', attemptId);
+        if (allSubs && allSubs.length > 0) {
+          const maxScores = {};
+          allSubs.forEach((s) => {
+            const qId = s.question_id;
+            const sc = Number(s.score) || 0;
+            if (!maxScores[qId] || sc > maxScores[qId]) {
+              maxScores[qId] = sc;
+            }
+          });
+          calculatedScore = Object.values(maxScores).reduce((sum, val) => sum + val, 0);
+        }
+      } catch (subErr) {
+        console.warn('Supabase submission score fallback error:', subErr);
+      }
+    }
+
+    try {
+      const updatePayload = {
+        status: status,
+        submitted_at: submittedAt
+      };
+      if (calculatedScore !== null && calculatedScore !== undefined) {
+        updatePayload.score = calculatedScore;
+      }
+
       const { data, error } = await supabase
         .from('test_attempts')
-        .update({
-          status: status,
-          submitted_at: submittedAt
-        })
+        .update(updatePayload)
         .eq('id', attemptId)
         .select()
         .single();
 
       if (!error && data) {
-        return { data };
+        return { data: { ...data, total_score: data.score ?? calculatedScore } };
       }
     } catch (e) {
       console.warn('Supabase finishTest error:', e);
     }
-    return { data: { status: status, submitted_at: submittedAt } };
+    return { data: { status: status, submitted_at: submittedAt, total_score: calculatedScore ?? 0, score: calculatedScore ?? 0 } };
   }
 };
 
@@ -800,11 +839,13 @@ export const codeAPI = {
         if (allSubs) {
           const maxScores = {};
           allSubs.forEach(s => {
-            if (!maxScores[s.question_id] || s.score > maxScores[s.question_id]) {
-              maxScores[s.question_id] = s.score;
+            const qId = s.question_id;
+            const sc = Number(s.score) || 0;
+            if (maxScores[qId] === undefined || sc > maxScores[qId]) {
+              maxScores[qId] = sc;
             }
           });
-          const totalScore = Object.values(maxScores).reduce((sum, s) => sum + (s || 0), 0);
+          const totalScore = Object.values(maxScores).reduce((sum, val) => sum + val, 0);
           
           await supabase
             .from('test_attempts')

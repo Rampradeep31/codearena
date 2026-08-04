@@ -171,7 +171,7 @@ export default function OutputPanel({ result, running, onCollapse, isCollapsed }
                           tc.passed ? 'text-emerald-400' : 'text-rose-400'
                         }`}
                       >
-                        {tc.actual_output || '(Empty)'}
+                        {tc.error ? tc.error : (tc.actual_output || '(Empty)')}
                       </pre>
                     </div>
                   </div>

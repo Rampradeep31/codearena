@@ -49,6 +49,12 @@ export default function TestComplete() {
                 <span className="text-dark-400">Violations</span>
                 <span className={`font-medium ${attempt.violation_count > 0 ? 'text-amber-500' : 'text-dark-300'}`}>{attempt.violation_count}</span>
               </div>
+              {(attempt.total_score ?? attempt.score) != null && (
+                <div className="flex items-center justify-between text-sm mt-4 pt-4 border-t border-dark-700/50">
+                  <span className="text-dark-400">Total Score</span>
+                  <span className="text-emerald-400 font-bold text-lg">{attempt.total_score ?? attempt.score}</span>
+                </div>
+              )}
             </div>
           </div>
         )}
