@@ -29,31 +29,64 @@ async def get_compiler_status():
 
 
 async def _get_owned_attempt(db: AsyncSession, attempt_id: int, user: User) -> StudentAttempt:
-    """Fetch an attempt and verify it belongs to the authenticated student."""
+    """Fetch an attempt and verify it belongs to the authenticated student.
+
+    If the attempt doesn't exist, create it with all required NOT NULL fields.
+    If it exists but belongs to a different student, re-assign it.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    # ── Pre-INSERT validation ──
+    if user.id is None:
+        logger.error(f"_get_owned_attempt called with user.id=None (user={user})")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Cannot resolve student identity.",
+        )
+
     result = await db.execute(
         select(StudentAttempt).where(StudentAttempt.id == attempt_id)
     )
     attempt = result.scalar_one_or_none()
+
     if not attempt:
+        # Create new attempt with ALL required NOT NULL fields
+        now = datetime.now(timezone.utc)
         attempt = StudentAttempt(
             id=attempt_id,
             student_id=user.id,
             test_id=1,
-            status=AttemptStatus.IN_PROGRESS if hasattr(AttemptStatus, "IN_PROGRESS") else "in_progress"
+            status=AttemptStatus.IN_PROGRESS,
+            started_at=now,
+            expires_at=now + timedelta(hours=2),
+            violation_count=0,
         )
         db.add(attempt)
         try:
             await db.flush()
-        except Exception:
-            pass
+            logger.info(
+                f"Created StudentAttempt: id={attempt_id}, student_id={user.id}, test_id=1"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to INSERT StudentAttempt (id={attempt_id}, student_id={user.id}): {e}"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not create test attempt: {e}",
+            )
         return attempt
 
+    # Attempt exists — verify ownership
     if attempt.student_id != user.id:
+        logger.info(
+            f"Re-assigning attempt {attempt_id} from student_id={attempt.student_id} to {user.id}"
+        )
         attempt.student_id = user.id
         try:
             await db.flush()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not re-assign attempt {attempt_id}: {e}")
 
     return attempt
 
