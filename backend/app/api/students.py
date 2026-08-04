@@ -537,12 +537,14 @@ async def record_violation(
     await db.flush()
     await db.refresh(violation)
 
-    # Check if violation limit reached — auto submit.
-    # face_turned (camera-away) has its own stricter limit (2).
+    # Determine effective limit for display purposes only.
+    # NOTE: reaching the violation limit must NEVER auto-submit the attempt.
+    # The lifecycle only allows COMPLETED via the student's submit action or
+    # the attempt timer expiring. Violation events are environmental (tab
+    # switch, fullscreen exit) and must not complete an exam.
     test_result = await db.execute(select(Test).where(Test.id == attempt.test_id))
     test = test_result.scalar_one_or_none()
 
-    limit_reached = False
     effective_max = test.max_violations if test else settings.MAX_VIOLATIONS_DEFAULT
     if data.violation_type == "face_turned":
         face_count_result = await db.execute(
@@ -551,25 +553,14 @@ async def record_violation(
                 Violation.violation_type == "face_turned",
             )
         )
-        limit_reached = (face_count_result.scalar() or 0) >= settings.MAX_FACE_TURN_VIOLATIONS
         effective_max = settings.MAX_FACE_TURN_VIOLATIONS
-    elif test:
-        limit_reached = attempt.violation_count >= test.max_violations
-
-    auto_submitted = False
-    if limit_reached:
-        attempt.status = AttemptStatus.AUTO_SUBMITTED
-        attempt.submitted_at = now
-        attempt.submission_reason = SubmissionReason.VIOLATION_LIMIT
-        auto_submitted = True
-        await db.flush()
 
     return ViolationRecorded(
         id=violation.id, attempt_id=violation.attempt_id,
         violation_type=violation.violation_type, created_at=violation.created_at,
         violation_count=attempt.violation_count,
         max_violations=effective_max,
-        auto_submitted=auto_submitted,
+        auto_submitted=False,
     )
 
 

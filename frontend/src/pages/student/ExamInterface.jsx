@@ -282,18 +282,10 @@ export default function ExamInterface() {
         id: 'violation-toast'
       });
 
-      if (data.auto_submitted || newCount >= maxViolations) {
-        setWarningMsg(`Maximum violations reached (${newCount}/${maxViolations}). Your test has been auto-submitted.`);
-        autoSubmittedRef.current = true;
-        try {
-          await studentAPI.finishTest(attemptId, 'auto_submitted');
-        } catch (e) {
-          console.error("Auto-submission failed:", e);
-        }
-        setTimeout(() => navigate(`/student/exam/${attemptId}/complete`, { replace: true }), 1500);
-      } else {
-        setWarningMsg(`Warning ${newCount} of ${maxViolations}: You left the examination screen. This activity has been recorded.`);
-      }
+      // Violations are recorded as warnings only. They must NEVER complete the
+      // exam: COMPLETED happens solely via the submit button or the attempt
+      // timer expiring.
+      setWarningMsg(`Warning ${newCount} of ${maxViolations}: You left the examination screen. This activity has been recorded.`);
     } catch (err) {
       console.error("Violation recording failed:", err);
       const newCount = prevCount + 1;

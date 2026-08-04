@@ -287,18 +287,15 @@ export const studentAPI = {
       ? ({ 2: 'Second Year', 3: 'Third Year' })[Number(currentUser.year)]
       : null;
 
-    try {
-      const res = await backendApi.get('/student/tests');
-      const data = res?.data;
-      // Trust the backend only when it actually returned tests. An empty/stale
-      // backend response would otherwise hide every test from the dashboard.
-      if (data && (data.active?.length || data.upcoming?.length || data.completed?.length)) {
-        return res;
-      }
-    } catch (e) {
-      console.warn('Backend API getTests error, trying Supabase/local:', e);
-    }
-
+    // PHASE 6 FIX (verified root cause): Supabase is the SINGLE source of
+    // truth for the student dashboard. It is the same store the admin
+    // dashboard reads (adminAPI.getTests -> supabase.from('tests')) and the
+    // same store this app WRITES tests/attempts to (adminAPI.createTest,
+    // startTest/finishTest Supabase updates). The FastAPI backend reads its
+    // own SEPARATE database (verified: backend/codearena.db is an empty,
+    // different store with its own table names and id space), so a non-empty
+    // backend response must never override Supabase. The backend is kept only
+    // as a last-resort fallback when Supabase is unreachable.
     const getLocalStatus = (testId) => {
       if (!userKey) return { status: null, submittedAt: null, attemptId: null };
       const status = localStorage.getItem(`codearena_attempt_status_u${userKey}_t${testId}`);
@@ -311,8 +308,6 @@ export const studentAPI = {
 
     try {
       const { data: dbTests, error } = await supabase.from('tests').select('*');
-      // ─── DEBUG (requirement 3): RAW Supabase rows BEFORE any frontend filtering ───
-      console.log('[studentAPI.getTests] RAW tests rows (from Supabase, pre-filter):', JSON.stringify(dbTests));
       if (!error && dbTests && dbTests.length > 0) {
         const active = [];
         const completed = [];
@@ -356,14 +351,16 @@ export const studentAPI = {
                 .from('test_attempts')
                 .select('*')
                 .eq('test_id', t.id)
+                // Scope to this student in SQL (not in JS) so another
+                // student's attempt can never be attributed to this user
+                // (cross-student id-space collisions caused false
+                // "completed without submission" and missing ACTIVE tests).
+                .eq('user_id', currentUser.id)
                 .order('id', { ascending: false });
-
-              // ─── DEBUG (req 3): RAW attempt rows for this test BEFORE filtering ───
-              console.log(`[studentAPI.getTests] RAW test_attempts rows for test #${t.id} (pre-filter):`, JSON.stringify(attempts || []));
 
               attemptsFetched = true;
               if (attempts && attempts.length > 0) {
-                // STRICTLY match only this current logged-in user
+                // STRICTLY match only this current logged-in user (safety net)
                 dbAttempt = attempts.find(a => attemptBelongsToUser(a, currentUser)) || null;
               }
             } catch (attErr) {
@@ -382,8 +379,11 @@ export const studentAPI = {
             const dbStatus = normalizeAttemptStatus(dbAttempt.status);
             if (isCompletedAttemptStatus(dbStatus) || hasSubmittedTimestamp(dbAttempt.submitted_at)) {
               // Completed statuses include 'submitted', 'auto_submitted' and
-              // 'completed' (the dashboard card helpers handle all three).
-              testData.attempt_status = dbStatus || 'submitted';
+              // 'completed' (the dashboard card helpers handle all three). When
+              // completion is proven only by submitted_at (status may still be
+              // 'in_progress'), normalize to 'submitted' so the dashboard card
+              // renders the Submitted state consistently.
+              testData.attempt_status = isCompletedAttemptStatus(dbStatus) ? dbStatus : 'submitted';
             } else {
               testData.attempt_status = dbStatus || ACTIVE_ATTEMPT_STATUS;
             }
@@ -426,6 +426,17 @@ export const studentAPI = {
       }
     } catch (e) {
       console.warn('Supabase getTests error:', e);
+    }
+
+    // ── Last-resort fallback: FastAPI backend (only when Supabase failed) ──
+    try {
+      const res = await backendApi.get('/student/tests');
+      const data = res?.data;
+      if (data && (data.active?.length || data.upcoming?.length || data.completed?.length)) {
+        return res;
+      }
+    } catch (e) {
+      console.warn('Backend API getTests error, trying local fallback:', e);
     }
 
     // Default Fallback with User-Scoped Local Storage Status Check
@@ -825,7 +836,7 @@ export const studentAPI = {
             ...updatedAttempt,
             violation_count: nextCount,
             max_violations: maxV,
-            auto_submitted: nextCount >= maxV
+            auto_submitted: false
           }
         };
       }
@@ -837,7 +848,7 @@ export const studentAPI = {
       data: { 
         violation_count: nextCount, 
         max_violations: 3,
-        auto_submitted: nextCount >= 3 
+        auto_submitted: false 
       } 
     };
   },
