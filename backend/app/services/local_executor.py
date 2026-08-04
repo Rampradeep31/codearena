@@ -4,6 +4,7 @@ import sys
 import time
 import shutil
 import logging
+import platform
 import tempfile
 import subprocess
 from typing import Dict, Any, Optional
@@ -17,11 +18,11 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
+MAX_OUTPUT_BYTES = 500000  # 500 KB limit for stdout/stderr to prevent memory bloat
 
 # Static security filter: blocks student code that attempts to reach outside
 # the sandbox. This is a defense-in-depth layer, NOT a substitute for a real
-# sandbox (containers / Judge0). Patterns are matched against a normalized
-# (lowercased, whitespace-stripped) copy of the source.
+# sandbox (containers / Judge0).
 BLOCKED_PATTERNS = [
     r"\bimport\s+os\b",
     r"\bfrom\s+os\b",
@@ -107,7 +108,7 @@ def _kill_process_tree(process: subprocess.Popen):
             subprocess.run(
                 ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                 capture_output=True,
-                timeout=10,
+                timeout=5,
             )
         else:
             os.killpg(process.pid, 9)
@@ -120,19 +121,21 @@ def _kill_process_tree(process: subprocess.Popen):
         pass
 
 
-def _find_python_cmd() -> str:
-    """Detect available python interpreter command."""
+def _find_python_cmd() -> Optional[str]:
+    """Detect available python interpreter command or path."""
     if shutil.which("python3"):
-        return "python3"
+        return shutil.which("python3")
     if shutil.which("python"):
-        return "python"
-    return sys.executable
+        return shutil.which("python")
+    if sys.executable:
+        return sys.executable
+    return None
 
 
 def _find_javac() -> Optional[str]:
-    """Detect available javac compiler command."""
+    """Detect available javac compiler command or path."""
     if shutil.which("javac"):
-        return "javac"
+        return shutil.which("javac")
     java_home = os.environ.get("JAVA_HOME")
     if java_home:
         candidate = os.path.join(java_home, "bin", "javac.exe" if sys.platform == "win32" else "javac")
@@ -152,9 +155,9 @@ def _find_javac() -> Optional[str]:
 
 
 def _find_java() -> Optional[str]:
-    """Detect available java runtime command."""
+    """Detect available java runtime command or path."""
     if shutil.which("java"):
-        return "java"
+        return shutil.which("java")
     java_home = os.environ.get("JAVA_HOME")
     if java_home:
         candidate = os.path.join(java_home, "bin", "java.exe" if sys.platform == "win32" else "java")
@@ -170,6 +173,50 @@ def _find_java() -> Optional[str]:
                 candidate = os.path.join(jdk_dir, folder, "bin", "java.exe")
                 if os.path.exists(candidate):
                     return candidate
+    return None
+
+
+def _find_gcc() -> Optional[str]:
+    """Detect available C compiler (gcc) command or path."""
+    if shutil.which("gcc"):
+        return shutil.which("gcc")
+    if sys.platform == "win32":
+        common_paths = [
+            r"C:\mingw64\bin\gcc.exe",
+            r"C:\MinGW\bin\gcc.exe",
+            r"C:\msys64\ucrt64\bin\gcc.exe",
+            r"C:\msys64\mingw64\bin\gcc.exe",
+            r"C:\winlibs\bin\gcc.exe",
+        ]
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+    else:
+        for path in ["/usr/bin/gcc", "/usr/local/bin/gcc"]:
+            if os.path.exists(path):
+                return path
+    return None
+
+
+def _find_gpp() -> Optional[str]:
+    """Detect available C++ compiler (g++) command or path."""
+    if shutil.which("g++"):
+        return shutil.which("g++")
+    if sys.platform == "win32":
+        common_paths = [
+            r"C:\mingw64\bin\g++.exe",
+            r"C:\MinGW\bin\g++.exe",
+            r"C:\msys64\ucrt64\bin\g++.exe",
+            r"C:\msys64\mingw64\bin\g++.exe",
+            r"C:\winlibs\bin\g++.exe",
+        ]
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+    else:
+        for path in ["/usr/bin/g++", "/usr/local/bin/g++"]:
+            if os.path.exists(path):
+                return path
     return None
 
 
@@ -201,6 +248,84 @@ class LocalCodeExecutor:
         return lang_clean
 
     @classmethod
+    def check_compilers(cls) -> Dict[str, Dict[str, Any]]:
+        """
+        Verify compiler availability, executable path, and version string for
+        python, python3, java, javac, gcc, g++.
+        """
+        compilers = {}
+
+        # 1. Python
+        py_path = _find_python_cmd()
+        compilers["python"] = cls._get_tool_info(py_path, ["--version"])
+
+        # 2. Python3
+        py3_path = shutil.which("python3")
+        compilers["python3"] = cls._get_tool_info(py3_path, ["--version"])
+
+        # 3. Java
+        java_path = _find_java()
+        compilers["java"] = cls._get_tool_info(java_path, ["-version"])
+
+        # 4. Javac
+        javac_path = _find_javac()
+        compilers["javac"] = cls._get_tool_info(javac_path, ["-version"])
+
+        # 5. GCC
+        gcc_path = _find_gcc()
+        compilers["gcc"] = cls._get_tool_info(gcc_path, ["--version"])
+
+        # 6. G++
+        gpp_path = _find_gpp()
+        compilers["g++"] = cls._get_tool_info(gpp_path, ["--version"])
+
+        return compilers
+
+    @staticmethod
+    def _get_tool_info(tool_path: Optional[str], version_flag: list) -> Dict[str, Any]:
+        if not tool_path:
+            return {
+                "available": False,
+                "version": "Not installed",
+                "path": None,
+            }
+        try:
+            res = subprocess.run(
+                [tool_path] + version_flag,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            raw_v = (res.stdout or res.stderr or "").strip()
+            first_line = raw_v.splitlines()[0] if raw_v else "Available"
+            return {
+                "available": True,
+                "version": first_line,
+                "path": tool_path,
+            }
+        except Exception as e:
+            return {
+                "available": True,
+                "version": f"Available (version check failed: {str(e)})",
+                "path": tool_path,
+            }
+
+    @classmethod
+    def get_diagnostics(cls) -> Dict[str, Any]:
+        """Return system-wide diagnostic information including compiler availability."""
+        return {
+            "operating_system": platform.platform(),
+            "os_name": os.name,
+            "system": platform.system(),
+            "release": platform.release(),
+            "architecture": platform.architecture()[0],
+            "python_version": sys.version.split()[0],
+            "current_working_directory": os.getcwd(),
+            "path_environment": os.environ.get("PATH", ""),
+            "compilers": cls.check_compilers(),
+        }
+
+    @classmethod
     def execute(
         cls,
         source_code: str,
@@ -210,57 +335,56 @@ class LocalCodeExecutor:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> Dict[str, Any]:
         norm_lang = cls.normalize_language(language)
-        logger.info(f"Executing submission (Language: {norm_lang}, Timeout: {timeout}s)")
+        logger.info(f"[Execution Module] Starting submission (Language: {norm_lang}, Timeout: {timeout}s)")
 
         if norm_lang not in ("python", "java", "c", "cpp"):
-            return {
-                "status": "compilation_error",
-                "status_description": "Compilation Error",
-                "stdout": "",
-                "stderr": f"Unsupported language: {language}",
-                "compile_output": f"Unsupported language: {language}",
-                "output": "",
-                "error": f"Unsupported language: {language}",
-                "exit_code": 1,
-                "execution_time": 0.0,
-                "memory_used": 0,
-            }
+            return cls._evaluate_result(
+                stdout="",
+                stderr=f"Unsupported language: {language}",
+                compile_output=f"Unsupported language: {language}",
+                exit_code=1,
+                exec_time=0.0,
+                timed_out=False,
+                expected_output=expected_output,
+                is_compilation_failure=True,
+                language=norm_lang,
+            )
 
         from app.config import settings
         if not getattr(settings, "ALLOW_LOCAL_EXECUTION", True):
-            return {
-                "status": "runtime_error",
-                "status_description": "Runtime Error",
-                "stdout": "",
-                "stderr": "Code execution is disabled on this server",
-                "compile_output": "",
-                "output": "",
-                "error": "Code execution is disabled on this server",
-                "exit_code": 1,
-                "execution_time": 0.0,
-                "memory_used": 0,
-            }
+            return cls._evaluate_result(
+                stdout="",
+                stderr="Code execution is disabled on this server",
+                compile_output="",
+                exit_code=1,
+                exec_time=0.0,
+                timed_out=False,
+                expected_output=expected_output,
+                is_compilation_failure=False,
+                language=norm_lang,
+            )
 
         # Static security filter (defense-in-depth)
         blocked_reason = _scan_for_blocked_code(source_code, norm_lang)
         if blocked_reason:
-            logger.warning(f"Blocked code submission ({norm_lang}): {blocked_reason}")
-            return {
-                "status": "compilation_error",
-                "status_description": "Compilation Error",
-                "stdout": "",
-                "stderr": blocked_reason,
-                "compile_output": blocked_reason,
-                "output": "",
-                "error": blocked_reason,
-                "exit_code": 1,
-                "execution_time": 0.0,
-                "memory_used": 0,
-            }
+            logger.warning(f"[Execution Module] Blocked code submission ({norm_lang}): {blocked_reason}")
+            return cls._evaluate_result(
+                stdout="",
+                stderr=blocked_reason,
+                compile_output=blocked_reason,
+                exit_code=1,
+                exec_time=0.0,
+                timed_out=False,
+                expected_output=expected_output,
+                is_compilation_failure=True,
+                language=norm_lang,
+            )
 
         memory_limit_kb = int(getattr(settings, "CODE_MEMORY_LIMIT_KB", 0) or 0)
 
+        # Temporary working directory per submission with automatic cleanup
         with tempfile.TemporaryDirectory(prefix="code_exec_") as temp_dir:
+            logger.info(f"[Execution Module] Created isolated temp directory: {temp_dir}")
             try:
                 if norm_lang == "python":
                     return cls._run_python(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
@@ -271,19 +395,18 @@ class LocalCodeExecutor:
                 elif norm_lang == "cpp":
                     return cls._run_cpp(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
             except Exception as e:
-                logger.error(f"Unexpected error during code execution: {str(e)}", exc_info=True)
-                return {
-                    "status": "runtime_error",
-                    "status_description": "Runtime Error",
-                    "stdout": "",
-                    "stderr": str(e),
-                    "compile_output": "",
-                    "output": "",
-                    "error": str(e),
-                    "exit_code": 1,
-                    "execution_time": 0.0,
-                    "memory_used": 0,
-                }
+                logger.error(f"[Execution Module] Unexpected execution exception: {str(e)}", exc_info=True)
+                return cls._evaluate_result(
+                    stdout="",
+                    stderr=str(e),
+                    compile_output="",
+                    exit_code=1,
+                    exec_time=0.0,
+                    timed_out=False,
+                    expected_output=expected_output,
+                    is_compilation_failure=False,
+                    language=norm_lang,
+                )
 
     @classmethod
     def _evaluate_result(
@@ -296,13 +419,18 @@ class LocalCodeExecutor:
         timed_out: bool,
         expected_output: Optional[str] = None,
         is_compilation_failure: bool = False,
+        is_missing_compiler: bool = False,
+        language: str = "python",
     ) -> Dict[str, Any]:
-        """Classify execution verdict into Accepted, Wrong Answer, Compilation Error, or Runtime Error."""
+        """Format verdict into a standardized Judge0-compatible output dictionary."""
         clean_stdout = stdout.strip() if stdout else ""
         clean_stderr = stderr.strip() if stderr else ""
         clean_compile = compile_output.strip() if compile_output else ""
 
-        if is_compilation_failure:
+        if is_missing_compiler:
+            exec_status = "compiler_not_installed"
+            desc = "Compiler Not Installed"
+        elif is_compilation_failure:
             exec_status = "compilation_error"
             desc = "Compilation Error"
         elif timed_out:
@@ -325,7 +453,9 @@ class LocalCodeExecutor:
                 exec_status = "accepted"
                 desc = "Accepted"
 
-        error_msg = clean_stderr or clean_compile if exec_status in ("compilation_error", "runtime_error") else clean_stderr
+        error_msg = clean_stderr or clean_compile if exec_status in ("compilation_error", "runtime_error", "compiler_not_installed") else clean_stderr
+
+        rounded_time = round(exec_time, 3)
 
         return {
             "status": exec_status,
@@ -333,11 +463,15 @@ class LocalCodeExecutor:
             "stdout": stdout,
             "stderr": stderr,
             "compile_output": compile_output,
+            "exitCode": exit_code,
+            "exit_code": exit_code,
+            "executionTime": rounded_time,
+            "execution_time": rounded_time,
+            "memory": 0,
+            "memory_used": 0,
+            "language": language,
             "output": stdout,
             "error": error_msg,
-            "exit_code": exit_code,
-            "execution_time": round(exec_time, 3),
-            "memory_used": 0,
         }
 
     @classmethod
@@ -351,6 +485,8 @@ class LocalCodeExecutor:
     ) -> tuple[str, str, int, float, bool]:
         """Execute a subprocess with stdin, stdout, stderr capture and timeout protection."""
         start_time = time.perf_counter()
+
+        logger.info(f"[Execution Subprocess] Running command: {' '.join(cmd)} (CWD: {cwd})")
 
         popen_kwargs = {
             "stdin": subprocess.PIPE,
@@ -377,13 +513,23 @@ class LocalCodeExecutor:
             process = subprocess.Popen(cmd, **popen_kwargs)
             stdout, stderr = process.communicate(input=stdin_data, timeout=timeout)
             exec_time = time.perf_counter() - start_time
+
+            # Cap output sizes to avoid RAM exhaustion
+            if len(stdout) > MAX_OUTPUT_BYTES:
+                stdout = stdout[:MAX_OUTPUT_BYTES] + "\n... [Output Truncated]"
+            if len(stderr) > MAX_OUTPUT_BYTES:
+                stderr = stderr[:MAX_OUTPUT_BYTES] + "\n... [Stderr Truncated]"
+
+            logger.info(f"[Execution Subprocess] Finished in {exec_time:.3f}s with exit code {process.returncode}")
             return stdout, stderr, process.returncode, exec_time, False
         except subprocess.TimeoutExpired:
             exec_time = time.perf_counter() - start_time
+            logger.warning(f"[Execution Subprocess] Command timed out after {timeout}s")
             _kill_process_tree(process)
             return "", "Time Limit Exceeded", 124, exec_time, True
         except Exception as e:
             exec_time = time.perf_counter() - start_time
+            logger.error(f"[Execution Subprocess] Exception during execution: {str(e)}")
             return "", str(e), 1, exec_time, False
 
     @classmethod
@@ -395,7 +541,7 @@ class LocalCodeExecutor:
         with open(py_file, "w", encoding="utf-8") as f:
             f.write(source_code)
 
-        python_cmd = _find_python_cmd()
+        python_cmd = _find_python_cmd() or "python"
         cmd = [python_cmd, "-I", py_file]
 
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
@@ -415,6 +561,7 @@ class LocalCodeExecutor:
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=is_compilation_error,
+            language="python",
         )
 
     @classmethod
@@ -426,7 +573,8 @@ class LocalCodeExecutor:
         java_bin = _find_java()
 
         if not javac_bin or not java_bin:
-            err_msg = "Java compiler (javac) or runtime (java) is not installed on this server environment."
+            err_msg = "Java compiler (javac) or runtime (java) is not installed on this system."
+            logger.warning(f"[Execution Module] Java check failed: {err_msg}")
             return cls._evaluate_result(
                 stdout="",
                 stderr=err_msg,
@@ -435,21 +583,27 @@ class LocalCodeExecutor:
                 exec_time=0.0,
                 timed_out=False,
                 expected_output=expected_output,
-                is_compilation_failure=True,
+                is_missing_compiler=True,
+                language="java",
             )
 
         class_name = extract_java_class_name(source_code)
-        java_file = os.path.join(temp_dir, f"{class_name}.java")
+        
+        # Write to class_name.java (e.g. Main.java) inside isolated temp_dir
+        java_filename = f"{class_name}.java"
+        java_file = os.path.join(temp_dir, java_filename)
+
         with open(java_file, "w", encoding="utf-8") as f:
             f.write(source_code)
 
-        # Step 1: Compile
-        compile_cmd = [javac_bin, f"{class_name}.java"]
+        # Step 1: Compile javac Main.java (or ClassName.java) in temp_dir
+        compile_cmd = [javac_bin, java_filename]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
             compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
         if exit_code_c != 0 or timed_out_c:
+            logger.warning(f"[Execution Module] Java compilation failed (Exit code: {exit_code_c}): {stderr_c}")
             return cls._evaluate_result(
                 stdout=stdout_c,
                 stderr=stderr_c,
@@ -459,10 +613,11 @@ class LocalCodeExecutor:
                 timed_out=timed_out_c,
                 expected_output=expected_output,
                 is_compilation_failure=True,
+                language="java",
             )
 
-        # Step 2: Run
-        run_cmd = [java_bin, "-cp", temp_dir, class_name]
+        # Step 2: Run java -cp . ClassName in temp_dir
+        run_cmd = [java_bin, "-cp", ".", class_name]
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
             run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
@@ -476,6 +631,7 @@ class LocalCodeExecutor:
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=False,
+            language="java",
         )
 
     @classmethod
@@ -483,9 +639,10 @@ class LocalCodeExecutor:
         cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str,
         memory_limit_kb: int = 0,
     ) -> Dict[str, Any]:
-        gcc_bin = shutil.which("gcc")
+        gcc_bin = _find_gcc()
         if not gcc_bin:
-            err_msg = "C compiler (gcc) is not installed on this server environment."
+            err_msg = "C compiler (gcc) is not installed on this system."
+            logger.warning(f"[Execution Module] C check failed: {err_msg}")
             return cls._evaluate_result(
                 stdout="",
                 stderr=err_msg,
@@ -494,23 +651,27 @@ class LocalCodeExecutor:
                 exec_time=0.0,
                 timed_out=False,
                 expected_output=expected_output,
-                is_compilation_failure=True,
+                is_missing_compiler=True,
+                language="c",
             )
 
-        c_file = os.path.join(temp_dir, "solution.c")
+        c_filename = "main.c"
+        c_file = os.path.join(temp_dir, c_filename)
         with open(c_file, "w", encoding="utf-8") as f:
             f.write(source_code)
 
-        exe_filename = "solution.exe" if sys.platform == "win32" else "solution"
+        is_win = sys.platform == "win32"
+        exe_filename = "main.exe" if is_win else "main"
         exe_path = os.path.join(temp_dir, exe_filename)
 
-        # Step 1: Compile
-        compile_cmd = [gcc_bin, "solution.c", "-o", exe_filename, "-lm"]
+        # Step 1: Compile gcc main.c -o main (or main.exe)
+        compile_cmd = [gcc_bin, c_filename, "-o", exe_filename, "-lm"]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
             compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
         if exit_code_c != 0 or timed_out_c:
+            logger.warning(f"[Execution Module] C compilation failed (Exit code: {exit_code_c}): {stderr_c}")
             return cls._evaluate_result(
                 stdout=stdout_c,
                 stderr=stderr_c,
@@ -520,10 +681,11 @@ class LocalCodeExecutor:
                 timed_out=timed_out_c,
                 expected_output=expected_output,
                 is_compilation_failure=True,
+                language="c",
             )
 
-        # Step 2: Run
-        run_cmd = [exe_path] if sys.platform == "win32" else [f"./{exe_filename}"]
+        # Step 2: Run executable (main.exe on Windows, ./main on Linux)
+        run_cmd = [exe_path] if is_win else [f"./{exe_filename}"]
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
             run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
@@ -537,6 +699,7 @@ class LocalCodeExecutor:
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=False,
+            language="c",
         )
 
     @classmethod
@@ -544,9 +707,10 @@ class LocalCodeExecutor:
         cls, source_code: str, stdin: str, expected_output: Optional[str], timeout: float, temp_dir: str,
         memory_limit_kb: int = 0,
     ) -> Dict[str, Any]:
-        gpp_bin = shutil.which("g++")
+        gpp_bin = _find_gpp()
         if not gpp_bin:
-            err_msg = "C++ compiler (g++) is not installed on this server environment."
+            err_msg = "C++ compiler (g++) is not installed on this system."
+            logger.warning(f"[Execution Module] C++ check failed: {err_msg}")
             return cls._evaluate_result(
                 stdout="",
                 stderr=err_msg,
@@ -555,23 +719,27 @@ class LocalCodeExecutor:
                 exec_time=0.0,
                 timed_out=False,
                 expected_output=expected_output,
-                is_compilation_failure=True,
+                is_missing_compiler=True,
+                language="cpp",
             )
 
-        cpp_file = os.path.join(temp_dir, "solution.cpp")
+        cpp_filename = "main.cpp"
+        cpp_file = os.path.join(temp_dir, cpp_filename)
         with open(cpp_file, "w", encoding="utf-8") as f:
             f.write(source_code)
 
-        exe_filename = "solution.exe" if sys.platform == "win32" else "solution"
+        is_win = sys.platform == "win32"
+        exe_filename = "main.exe" if is_win else "main"
         exe_path = os.path.join(temp_dir, exe_filename)
 
-        # Step 1: Compile
-        compile_cmd = [gpp_bin, "solution.cpp", "-o", exe_filename, "-lm"]
+        # Step 1: Compile g++ main.cpp -o main (or main.exe)
+        compile_cmd = [gpp_bin, cpp_filename, "-o", exe_filename, "-lm"]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
             compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
         if exit_code_c != 0 or timed_out_c:
+            logger.warning(f"[Execution Module] C++ compilation failed (Exit code: {exit_code_c}): {stderr_c}")
             return cls._evaluate_result(
                 stdout=stdout_c,
                 stderr=stderr_c,
@@ -581,10 +749,11 @@ class LocalCodeExecutor:
                 timed_out=timed_out_c,
                 expected_output=expected_output,
                 is_compilation_failure=True,
+                language="cpp",
             )
 
-        # Step 2: Run
-        run_cmd = [exe_path] if sys.platform == "win32" else [f"./{exe_filename}"]
+        # Step 2: Run executable (main.exe on Windows, ./main on Linux)
+        run_cmd = [exe_path] if is_win else [f"./{exe_filename}"]
         stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
             run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
@@ -598,8 +767,8 @@ class LocalCodeExecutor:
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=False,
+            language="cpp",
         )
 
 
 LocalExecutor = LocalCodeExecutor
-

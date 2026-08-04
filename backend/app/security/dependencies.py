@@ -7,7 +7,16 @@ from app.database.connection import get_db
 from app.security.jwt import decode_access_token
 from app.models.user import User, UserRole
 
-security_scheme = HTTPBearer()
+from typing import Optional
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database.connection import get_db
+from app.security.jwt import decode_access_token
+from app.models.user import User, UserRole
+
+security_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
@@ -15,7 +24,14 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Extract and validate a signed JWT or authorization token, return the current user."""
-    token = credentials.credentials if credentials else ""
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = credentials.credentials.strip()
     user_id = 1
     role_str = "student"
 
@@ -35,7 +51,11 @@ async def get_current_user(
             user_id = int(payload.get("sub", 1))
             role_str = payload.get("role", "student")
         except Exception:
-            role_str = "student"
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     try:
         result = await db.execute(select(User).where(User.id == user_id))
@@ -58,6 +78,12 @@ async def get_current_user(
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     """Ensure the current user is an admin."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -68,6 +94,12 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
 
 async def require_student(user: User = Depends(get_current_user)) -> User:
     """Ensure the current user is a student."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if user.role != UserRole.STUDENT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

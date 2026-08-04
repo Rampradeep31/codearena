@@ -28,24 +28,41 @@ app = FastAPI(
 )
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    tb = traceback.format_exc()
-    print("GLOBAL EXCEPTION LOG:", tb)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
+import logging
 
-# CORS
-origins = [o.strip() for o in settings.CORS_ORIGINS.split(",")]
+logger = logging.getLogger("main")
+
+# CORS setup before routes and exception handling
+origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+if "https://codearena-indol.vercel.app" not in origins:
+    origins.append("https://codearena-indol.vercel.app")
+if "http://localhost:5173" not in origins:
+    origins.append("http://localhost:5173")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins if origins else ["*"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    logger.error(f"[GLOBAL EXCEPTION] {request.method} {request.url}: {exc}\n{tb}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 # Include routers
 app.include_router(auth_router)
@@ -62,3 +79,10 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/compiler/status")
+async def compiler_status():
+    """Diagnostics endpoint for local compiler environment."""
+    from app.services.local_executor import LocalCodeExecutor
+    return LocalCodeExecutor.get_diagnostics()

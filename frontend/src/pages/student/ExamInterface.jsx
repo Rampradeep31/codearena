@@ -327,6 +327,13 @@ export default function ExamInterface() {
 
   // ─── Run Code ─────────────────────────────────
   const handleRun = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast.error("Session expired. Please log in again.");
+      navigate('/student/entry');
+      return;
+    }
+
     const qObj = questions[currentIdx];
     if (!qObj) return;
     const qId = qObj.question_id || qObj.id;
@@ -357,12 +364,20 @@ export default function ExamInterface() {
         setActiveCaseIdx(firstFail !== undefined && firstFail !== -1 ? firstFail : 0);
       }
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Execution error');
+      const errMsg = err.message || err.response?.data?.detail || 'Execution error';
+      toast.error(errMsg);
     } finally { setRunning(false); }
   };
 
   // ─── Submit Code ──────────────────────────────
   const handleSubmit = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast.error("Session expired. Please log in again.");
+      navigate('/student/entry');
+      return;
+    }
+
     const qObj = questions[currentIdx];
     if (!qObj) return;
     const qId = qObj.question_id || qObj.id;

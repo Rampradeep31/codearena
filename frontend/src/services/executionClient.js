@@ -9,8 +9,11 @@ export const executionClient = {
 
 export function getVerdict(result) {
   if (!result) return null;
-  if (result.compilation_status === 'error') return 'Compilation Error';
   const status = result.results?.[0]?.status;
+  if (status === 'compiler_not_installed' || (result.compilation_error && result.compilation_error.includes('Compiler Not Installed'))) {
+    return 'Compiler Not Installed';
+  }
+  if (result.compilation_status === 'error') return 'Compilation Error';
   if (status === 'time_limit_exceeded') return 'Time Limit Exceeded';
   if (status === 'runtime_error') return 'Runtime Error';
   return result.passed === result.total && result.total > 0 ? 'Accepted' : 'Wrong Answer';
