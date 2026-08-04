@@ -274,11 +274,11 @@ export default function ExamInterface() {
   };
 
   const handleFaceTurn = () => {
-    recordViolation('face_turned');
+    setWarningMsg('Proctoring Notice: Please keep your face centered in the camera view.');
   };
 
   const handleMultipleFaces = () => {
-    recordViolation('multiple_faces');
+    setWarningMsg('Proctoring Notice: Multiple faces detected in camera view. Please ensure you are taking the test alone.');
   };
 
   const requestFullscreen = async () => {

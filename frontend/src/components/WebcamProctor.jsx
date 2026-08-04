@@ -224,7 +224,7 @@ export default function WebcamProctor({
 
     if (peaks >= 2) {
       multiCounterRef.current++;
-      if (multiCounterRef.current >= 2) {
+      if (multiCounterRef.current >= 8) {
         setProctorStatus('multiple_faces');
         setWarningMessage('Multiple persons detected in camera frame!');
         if (onMultipleFaces) onMultipleFaces();
@@ -237,10 +237,9 @@ export default function WebcamProctor({
     // 3. Check Head Turn / Profile View (Horizontal Asymmetry & Center Offset)
     const asymmetry = Math.abs(leftSkin - rightSkin) / Math.max(1, (leftSkin + rightSkin));
 
-    // When head turns sideways (profile view as in screenshot), asymmetry > 0.42
-    if (asymmetry > 0.42) {
+    if (asymmetry > 0.55) {
       turnCounterRef.current++;
-      if (turnCounterRef.current >= 2) {
+      if (turnCounterRef.current >= 8) {
         setProctorStatus('turned_away');
         setWarningMessage('Head turned away! Please face forward.');
         if (onFaceTurn) onFaceTurn();
