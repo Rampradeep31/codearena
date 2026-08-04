@@ -464,16 +464,9 @@ export const studentAPI = {
             .filter(tc => !tc.is_hidden)
             .slice(0, 2);
 
-          // If all test cases were marked as hidden, take the first 2 test cases as sample test cases
           if (publicTestCases.length === 0 && q.test_cases && q.test_cases.length > 0) {
             publicTestCases = q.test_cases.slice(0, 2);
           }
-
-          publicTestCases = publicTestCases.map(tc => {
-            const cleanTc = { ...tc };
-            delete cleanTc.is_hidden;
-            return cleanTc;
-          });
 
           if (publicTestCases.length === 0 && (q.sample_input || q.sample_output)) {
             publicTestCases = [{
@@ -482,6 +475,12 @@ export const studentAPI = {
               expected_output: q.sample_output || ''
             }];
           }
+
+          publicTestCases = publicTestCases.map(tc => ({
+            id: tc.id || `tc_${q.id}`,
+            input: tc.input !== undefined && tc.input !== null ? String(tc.input) : '',
+            expected_output: tc.expected_output !== undefined && tc.expected_output !== null ? String(tc.expected_output) : ''
+          }));
 
           const cleanQuestion = {
             ...q,

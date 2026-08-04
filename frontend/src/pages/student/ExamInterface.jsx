@@ -764,10 +764,10 @@ export default function ExamInterface() {
                   {(() => {
                     const testCases = (qData?.test_cases && qData.test_cases.length > 0)
                       ? qData.test_cases
-                      : (runResult?.results && runResult.results.length > 0)
-                      ? runResult.results.map((r, i) => ({ id: i, input: r.input || `Sample Input ${i+1}`, expected_output: r.expected_output || '' }))
                       : (qData?.sample_input || qData?.sample_output)
                       ? [{ id: 'sample1', input: qData.sample_input || '', expected_output: qData.sample_output || '' }]
+                      : (runResult?.results && runResult.results.length > 0)
+                      ? runResult.results.map((r, i) => ({ id: i, input: r.input || '(Standard Input)', expected_output: r.expected_output || '—' }))
                       : [];
 
                     if (testCases.length === 0) {
