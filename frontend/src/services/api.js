@@ -140,17 +140,26 @@ export const authAPI = {
 // ─── Student API (Tests & Attempts) ───────────────────────────
 export const studentAPI = {
   getTests: async () => {
+    let currentUser = null;
+    try {
+      const userStr = localStorage.getItem('user');
+      if (userStr) currentUser = JSON.parse(userStr);
+    } catch (e) {
+      console.error(e);
+    }
+
+    const getLocalStatus = (testId) => {
+      const status = localStorage.getItem(`codearena_attempt_status_test_${testId}`) ||
+                     localStorage.getItem(`codearena_attempt_status_${testId}`);
+      const submittedAt = localStorage.getItem(`codearena_attempt_submitted_at_test_${testId}`) ||
+                          localStorage.getItem(`codearena_attempt_submitted_at_${testId}`);
+      const attemptId = localStorage.getItem(`codearena_attempt_id_test_${testId}`);
+      return { status, submittedAt, attemptId };
+    };
+
     try {
       const { data: dbTests, error } = await supabase.from('tests').select('*');
-      if (!error && dbTests) {
-        let currentUser = null;
-        try {
-          const userStr = localStorage.getItem('user');
-          if (userStr) currentUser = JSON.parse(userStr);
-        } catch (e) {
-          console.error(e);
-        }
-
+      if (!error && dbTests && dbTests.length > 0) {
         const active = [];
         const completed = [];
         const upcoming = [];
@@ -169,27 +178,47 @@ export const studentAPI = {
             end_time: t.end_time
           };
 
-          if (currentUser) {
-            const { data: attempts } = await supabase
-              .from('test_attempts')
-              .select('*')
-              .eq('test_id', t.id)
-              .eq('user_id', currentUser.id)
-              .order('id', { ascending: false });
+          // 1. Local Storage Status Check
+          const localInfo = getLocalStatus(t.id);
+          if (localInfo.status) {
+            testData.attempt_status = localInfo.status;
+            testData.attempt_submitted_at = localInfo.submittedAt;
+            if (localInfo.attemptId) testData.attempt_id = localInfo.attemptId;
+          }
 
-            if (attempts && attempts.length > 0) {
-              const latestAttempt = attempts[0];
-              testData.attempt_id = latestAttempt.id;
-              testData.attempt_status = latestAttempt.status;
-              testData.attempt_submitted_at = latestAttempt.submitted_at;
+          // 2. Supabase Attempt Status Check
+          if (currentUser) {
+            try {
+              const { data: attempts } = await supabase
+                .from('test_attempts')
+                .select('*')
+                .eq('test_id', t.id)
+                .order('id', { ascending: false });
+
+              if (attempts && attempts.length > 0) {
+                const userAttempt = attempts.find(a => a.user_id === currentUser.id) || attempts[0];
+                testData.attempt_id = testData.attempt_id || userAttempt.id;
+                
+                if (userAttempt.status === 'submitted' || userAttempt.status === 'auto_submitted') {
+                  testData.attempt_status = userAttempt.status;
+                  testData.attempt_submitted_at = userAttempt.submitted_at || localInfo.submittedAt;
+                } else if (!testData.attempt_status) {
+                  testData.attempt_status = userAttempt.status;
+                  testData.attempt_submitted_at = userAttempt.submitted_at;
+                }
+              }
+            } catch (attErr) {
+              console.warn("Supabase attempts fetch warning:", attErr);
             }
           }
 
           const now = new Date();
-          const startTime = new Date(t.start_time);
-          const endTime = new Date(t.end_time);
+          const startTime = new Date(t.start_time || Date.now());
+          const endTime = new Date(t.end_time || (Date.now() + 7 * 24 * 3600 * 1000));
 
-          if (testData.attempt_status === 'submitted' || testData.attempt_status === 'auto_submitted' || endTime < now) {
+          const isSubmitted = testData.attempt_status === 'submitted' || testData.attempt_status === 'auto_submitted';
+
+          if (isSubmitted || endTime < now) {
             completed.push(testData);
           } else if (startTime > now) {
             upcoming.push(testData);
@@ -204,21 +233,31 @@ export const studentAPI = {
       console.warn('Supabase getTests error:', e);
     }
 
-    // Active test fallback
+    // Default Fallback with Local Storage Status Check
+    const localInfo = getLocalStatus(1);
+    const isSubmitted = localInfo.status === 'submitted' || localInfo.status === 'auto_submitted';
+
+    const fallbackTest = {
+      id: 1,
+      name: "AI & DS Coding Assessment - Round 1",
+      description: "Official online assessment for AI & DS department. Complete 1 coding challenge within 60 minutes.",
+      duration_minutes: 60,
+      questions_per_student: 1,
+      total_marks: 50,
+      allowed_languages: ["python", "java", "c", "cpp"],
+      max_violations: 3,
+      start_time: new Date().toISOString(),
+      end_time: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+      attempt_status: localInfo.status || (isSubmitted ? 'submitted' : null),
+      attempt_submitted_at: localInfo.submittedAt,
+      attempt_id: localInfo.attemptId || 1
+    };
+
     return {
       data: {
-        active: [{
-          id: 1,
-          name: "AI & DS Coding Assessment - Round 1",
-          description: "Official online assessment for AI & DS department. Complete 1 coding challenge within 60 minutes.",
-          duration_minutes: 60,
-          questions_per_student: 1,
-          total_marks: 50,
-          allowed_languages: ["python", "java", "c", "cpp"],
-          max_violations: 3
-        }],
+        active: isSubmitted ? [] : [fallbackTest],
         upcoming: [],
-        completed: []
+        completed: isSubmitted ? [fallbackTest] : []
       }
     };
   },
@@ -557,12 +596,21 @@ export const studentAPI = {
   },
 
   finishTest: async (attemptId, status = 'submitted') => {
+    const submittedAt = new Date().toISOString();
+    
+    // Always persist submission status to localStorage immediately
+    localStorage.setItem(`codearena_attempt_status_${attemptId}`, status);
+    localStorage.setItem(`codearena_attempt_submitted_at_${attemptId}`, submittedAt);
+    localStorage.setItem(`codearena_attempt_status_test_1`, status);
+    localStorage.setItem(`codearena_attempt_submitted_at_test_1`, submittedAt);
+    localStorage.setItem(`codearena_attempt_id_test_1`, String(attemptId));
+
     try {
       const { data, error } = await supabase
         .from('test_attempts')
         .update({
           status: status,
-          submitted_at: new Date().toISOString()
+          submitted_at: submittedAt
         })
         .eq('id', attemptId)
         .select()
@@ -574,7 +622,7 @@ export const studentAPI = {
     } catch (e) {
       console.warn('Supabase finishTest error:', e);
     }
-    return { data: { status: status } };
+    return { data: { status: status, submitted_at: submittedAt } };
   }
 };
 
