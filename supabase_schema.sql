@@ -91,6 +91,15 @@ ALTER TABLE public.tests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.test_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submissions ENABLE ROW LEVEL SECURITY;
 
+-- Grant table privileges to anon, authenticated, and service_role
+GRANT ALL ON TABLE public.users TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.questions TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.test_cases TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.tests TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.test_attempts TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.submissions TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
 DROP POLICY IF EXISTS "Allow public access users" ON public.users;
 CREATE POLICY "Allow public access users" ON public.users FOR ALL USING (true) WITH CHECK (true);
 
