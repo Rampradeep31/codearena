@@ -52,11 +52,14 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Forcefully relax NOT NULL constraints & set defaults on existing users table
+-- Ensure all columns exist on existing users table
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS register_number TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS department TEXT DEFAULT 'AI & DS';
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS year INT DEFAULT 1;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS section TEXT DEFAULT 'A';
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'student';
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 ALTER TABLE public.users ALTER COLUMN department SET DEFAULT 'AI & DS';
 ALTER TABLE public.users ALTER COLUMN year SET DEFAULT 1;
@@ -79,9 +82,12 @@ CREATE TABLE IF NOT EXISTS public.question_banks (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Forcefully relax NOT NULL constraints & set defaults on existing question_banks table
+-- Ensure all columns exist on existing question_banks table
+ALTER TABLE public.question_banks ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE public.question_banks ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE public.question_banks ADD COLUMN IF NOT EXISTS year TEXT DEFAULT 'Second Year';
 ALTER TABLE public.question_banks ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active';
+ALTER TABLE public.question_banks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 ALTER TABLE public.question_banks ALTER COLUMN year SET DEFAULT 'Second Year';
 ALTER TABLE public.question_banks ALTER COLUMN status SET DEFAULT 'Active';
@@ -108,12 +114,17 @@ CREATE TABLE IF NOT EXISTS public.questions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Forcefully relax NOT NULL constraints & set defaults on existing questions table
+-- Ensure all columns exist on existing questions table
 ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS constraints TEXT;
 ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS question_bank_id BIGINT REFERENCES public.question_banks(id) ON DELETE SET NULL;
 ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS difficulty TEXT DEFAULT 'easy';
 ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS marks INT DEFAULT 10;
 ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS topic TEXT DEFAULT 'General';
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS input_format TEXT;
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS output_format TEXT;
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS sample_input TEXT;
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS sample_output TEXT;
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS explanation TEXT;
 
 ALTER TABLE public.questions ALTER COLUMN difficulty SET DEFAULT 'easy';
 ALTER TABLE public.questions ALTER COLUMN marks SET DEFAULT 10;
@@ -226,6 +237,13 @@ CREATE TABLE IF NOT EXISTS public.test_attempts (
     submitted_at TIMESTAMPTZ
 );
 
+ALTER TABLE public.test_attempts ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'in_progress';
+ALTER TABLE public.test_attempts ADD COLUMN IF NOT EXISTS score INT DEFAULT 0;
+ALTER TABLE public.test_attempts ADD COLUMN IF NOT EXISTS violation_count INT DEFAULT 0;
+ALTER TABLE public.test_attempts ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.test_attempts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '1 hour');
+ALTER TABLE public.test_attempts ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+
 ALTER TABLE public.test_attempts ALTER COLUMN status SET DEFAULT 'in_progress';
 ALTER TABLE public.test_attempts ALTER COLUMN score SET DEFAULT 0;
 ALTER TABLE public.test_attempts ALTER COLUMN violation_count SET DEFAULT 0;
@@ -244,8 +262,19 @@ CREATE TABLE IF NOT EXISTS public.submissions (
     code TEXT NOT NULL,
     status TEXT DEFAULT 'submitted',
     score INT DEFAULT 0,
+    total_test_cases INT DEFAULT 0,
+    passed_test_cases INT DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Forcefully add missing columns on existing submissions table if it exists
+ALTER TABLE public.submissions ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'python';
+ALTER TABLE public.submissions ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE public.submissions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'submitted';
+ALTER TABLE public.submissions ADD COLUMN IF NOT EXISTS score INT DEFAULT 0;
+ALTER TABLE public.submissions ADD COLUMN IF NOT EXISTS total_test_cases INT DEFAULT 0;
+ALTER TABLE public.submissions ADD COLUMN IF NOT EXISTS passed_test_cases INT DEFAULT 0;
+ALTER TABLE public.submissions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 ALTER TABLE public.submissions ALTER COLUMN language SET DEFAULT 'python';
 ALTER TABLE public.submissions ALTER COLUMN status SET DEFAULT 'submitted';
