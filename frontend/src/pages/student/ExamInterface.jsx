@@ -716,37 +716,61 @@ export default function ExamInterface() {
               {resultTab === 'testcase' ? (
                 /* Testcase View */
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    {qData?.test_cases?.map((tc, idx) => (
-                      <button
-                        key={tc.id || idx}
-                        onClick={() => setActiveCaseIdx(idx)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                          activeCaseIdx === idx
-                            ? 'bg-brand-500/20 text-brand-400 font-semibold border border-brand-500/40 shadow'
-                            : 'bg-dark-800 text-dark-400 hover:text-dark-200 hover:bg-dark-700'
-                        }`}
-                      >
-                        Case {idx + 1}
-                      </button>
-                    ))}
-                  </div>
-                  {qData?.test_cases?.[activeCaseIdx] && (
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
-                        <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                          {qData.test_cases[activeCaseIdx].input}
-                        </pre>
-                      </div>
-                      <div>
-                        <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected Output</p>
-                        <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
-                          {qData.test_cases[activeCaseIdx].expected_output}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
+                  {(() => {
+                    const testCases = (qData?.test_cases && qData.test_cases.length > 0)
+                      ? qData.test_cases
+                      : (runResult?.results && runResult.results.length > 0)
+                      ? runResult.results.map((r, i) => ({ id: i, input: r.input || `Sample Input ${i+1}`, expected_output: r.expected_output || '' }))
+                      : (qData?.sample_input || qData?.sample_output)
+                      ? [{ id: 'sample1', input: qData.sample_input || '', expected_output: qData.sample_output || '' }]
+                      : [];
+
+                    if (testCases.length === 0) {
+                      return (
+                        <div className="text-center py-6 text-dark-400">
+                          No sample testcases available for preview.
+                        </div>
+                      );
+                    }
+
+                    const activeTc = testCases[activeCaseIdx] || testCases[0];
+
+                    return (
+                      <>
+                        <div className="flex items-center gap-2">
+                          {testCases.map((tc, idx) => (
+                            <button
+                              key={tc.id || idx}
+                              onClick={() => setActiveCaseIdx(idx)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                                activeCaseIdx === idx
+                                  ? 'bg-brand-500/20 text-brand-400 font-semibold border border-brand-500/40 shadow'
+                                  : 'bg-dark-800 text-dark-400 hover:text-dark-200 hover:bg-dark-700'
+                              }`}
+                            >
+                              Case {idx + 1}
+                            </button>
+                          ))}
+                        </div>
+                        {activeTc && (
+                          <div className="space-y-3 mt-3">
+                            <div>
+                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
+                              <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
+                                {activeTc.input || '—'}
+                              </pre>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected Output</p>
+                              <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
+                                {activeTc.expected_output || '—'}
+                              </pre>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               ) : (
                 /* Test Result View (LeetCode Style Pop-up) */
