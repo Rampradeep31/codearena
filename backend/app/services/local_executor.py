@@ -18,7 +18,7 @@ if not logger.handlers:
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
-DEFAULT_TIMEOUT_SECONDS = 5.0
+DEFAULT_TIMEOUT_SECONDS = 15.0
 MAX_OUTPUT_BYTES = 500000  # 500 KB limit for stdout/stderr to prevent memory bloat
 
 # Static security filter: blocks student code that attempts to reach outside
@@ -368,15 +368,15 @@ class LocalCodeExecutor:
         from app.config import settings
 
         # Apply language-specific timeout defaults if generic timeout passed
-        if timeout == DEFAULT_TIMEOUT_SECONDS:
+        if timeout == DEFAULT_TIMEOUT_SECONDS or timeout < 15.0:
             if norm_lang == "python":
-                timeout = float(getattr(settings, "TIMEOUT_PYTHON", 3.0))
+                timeout = float(getattr(settings, "TIMEOUT_PYTHON", 15.0))
             elif norm_lang == "c":
-                timeout = float(getattr(settings, "TIMEOUT_C", 2.0))
+                timeout = float(getattr(settings, "TIMEOUT_C", 15.0))
             elif norm_lang == "cpp":
-                timeout = float(getattr(settings, "TIMEOUT_CPP", 2.0))
+                timeout = float(getattr(settings, "TIMEOUT_CPP", 15.0))
             elif norm_lang == "java":
-                timeout = float(getattr(settings, "TIMEOUT_JAVA", 3.0))
+                timeout = float(getattr(settings, "TIMEOUT_JAVA", 15.0))
 
         logger.info(
             f"[Execution Module] Starting submission (Language: {norm_lang}, Timeout: {timeout}s, "

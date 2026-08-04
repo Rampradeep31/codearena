@@ -42,7 +42,7 @@ async def execute_code(
     Execute code using the in-container compiler/interpreter engine with
     concurrency throttling. Returns a Judge0-compatible result dictionary.
     """
-    timeout = float(getattr(settings, "CODE_TIMEOUT_SECONDS", 5))
+    timeout = float(getattr(settings, "CODE_TIMEOUT_SECONDS", 15.0))
     sem = _get_semaphore()
 
     # Throttled async execution in thread pool to prevent system overload

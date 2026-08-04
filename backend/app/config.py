@@ -17,11 +17,11 @@ class Settings(BaseSettings):
     JUDGE0_API_KEY: str = ""
     JUDGE0_MAX_CONCURRENT: int = 10
     # Code Execution Timeouts & Limits
-    CODE_TIMEOUT_SECONDS: int = 5
-    TIMEOUT_PYTHON: float = 3.0
-    TIMEOUT_C: float = 2.0
-    TIMEOUT_CPP: float = 2.0
-    TIMEOUT_JAVA: float = 3.0
+    CODE_TIMEOUT_SECONDS: float = 15.0
+    TIMEOUT_PYTHON: float = 15.0
+    TIMEOUT_C: float = 15.0
+    TIMEOUT_CPP: float = 15.0
+    TIMEOUT_JAVA: float = 15.0
     CODE_MEMORY_LIMIT_KB: int = 262144  # 256MB
     MAX_CONCURRENT_EXECUTIONS: int = 20  # Semaphore limit for execution governor
     MAX_PROCESSES_PER_SUBMISSION: int = 64  # RLIMIT_NPROC
