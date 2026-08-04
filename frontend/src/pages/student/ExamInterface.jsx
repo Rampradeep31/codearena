@@ -171,24 +171,40 @@ export default function ExamInterface() {
 
   const mountTime = useRef(Date.now());
   const hasEnteredFullscreen = useRef(false);
+  const violationCountRef = useRef(0);
+
+  // Keep Ref in sync with violationCount state
+  useEffect(() => {
+    if (attempt && typeof attempt.violation_count === 'number') {
+      const cnt = attempt.violation_count;
+      setViolationCount(cnt);
+      violationCountRef.current = cnt;
+    }
+  }, [attempt]);
 
   // ─── Violation Monitoring ─────────────────────
   useEffect(() => {
     const handleVisibility = () => {
-      if (Date.now() - mountTime.current < 5000) return;
-      if (document.hidden) recordViolation('tab_hidden');
+      if (Date.now() - mountTime.current < 2000) return;
+      if (document.hidden) {
+        recordViolation('tab_switch');
+      }
     };
+
     const handleBlur = () => {
-      if (Date.now() - mountTime.current < 5000) return;
-      recordViolation('window_blur');
+      if (Date.now() - mountTime.current < 2000) return;
+      if (!document.hidden) {
+        recordViolation('window_blur');
+      }
     };
+
     const handleFullscreenChange = () => {
       const currentlyFullscreen = !!document.fullscreenElement;
       setIsFullscreen(currentlyFullscreen);
       
       if (currentlyFullscreen) {
         hasEnteredFullscreen.current = true;
-      } else if (hasEnteredFullscreen.current && Date.now() - mountTime.current > 5000) {
+      } else if (hasEnteredFullscreen.current && Date.now() - mountTime.current > 2000) {
         recordViolation('fullscreen_exit');
       }
     };
@@ -202,7 +218,7 @@ export default function ExamInterface() {
       window.removeEventListener('blur', handleBlur);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [violationCount]);
+  }, [attemptId]);
 
   // ─── Online/Offline ───────────────────────────
   useEffect(() => {
@@ -215,7 +231,8 @@ export default function ExamInterface() {
 
   const recordViolation = async (type) => {
     const now = Date.now();
-    if (now - violationDebounce.current < 2000) return;
+    // 800ms debounce to prevent duplicate triggers from simultaneous blur + visibility events
+    if (now - violationDebounce.current < 800) return;
     violationDebounce.current = now;
 
     if (type === 'face_turned') {
@@ -224,27 +241,44 @@ export default function ExamInterface() {
       violationCounts.current.multiple_faces += 1;
     }
 
+    const prevCount = violationCountRef.current;
+
     try {
       const res = await studentAPI.recordViolation(attemptId, { violation_type: type });
       const data = res.data || {};
-      const newCount = typeof data.violation_count === 'number' ? data.violation_count : violationCount + 1;
+      
+      let newCount = prevCount + 1;
+      if (typeof data.violation_count === 'number' && data.violation_count > 0) {
+        newCount = Math.max(data.violation_count, prevCount + 1);
+      }
+
+      violationCountRef.current = newCount;
       setViolationCount(newCount);
 
-      if (data.auto_submitted || newCount >= (data.max_violations || attempt?.max_violations || 3)) {
-        setWarningMsg('Maximum violations reached. Your test has been auto-submitted.');
+      const maxViolations = data.max_violations || attempt?.max_violations || 3;
+
+      toast.error(`Violation recorded (${newCount}/${maxViolations}): Left exam screen`, {
+        id: 'violation-toast'
+      });
+
+      if (data.auto_submitted || newCount >= maxViolations) {
+        setWarningMsg(`Maximum violations reached (${newCount}/${maxViolations}). Your test has been auto-submitted.`);
         try {
           await studentAPI.finishTest(attemptId, 'auto_submitted');
         } catch (e) {
           console.error("Auto-submission failed:", e);
         }
-        setTimeout(() => navigate(`/student/exam/${attemptId}/complete`, { replace: true }), 2000);
-      } else if (newCount === 1) {
-        setWarningMsg('Warning 1: You left the examination screen. This activity has been recorded.');
-      } else if (newCount === 2) {
-        setWarningMsg('Warning 2: Another violation may result in automatic submission.');
+        setTimeout(() => navigate(`/student/exam/${attemptId}/complete`, { replace: true }), 1500);
+      } else {
+        setWarningMsg(`Warning ${newCount} of ${maxViolations}: You left the examination screen. This activity has been recorded.`);
       }
     } catch (err) {
       console.error("Violation recording failed:", err);
+      const newCount = prevCount + 1;
+      violationCountRef.current = newCount;
+      setViolationCount(newCount);
+      const maxViolations = attempt?.max_violations || 3;
+      setWarningMsg(`Warning ${newCount} of ${maxViolations}: You left the examination screen.`);
     }
   };
 

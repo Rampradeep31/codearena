@@ -499,23 +499,30 @@ export const studentAPI = {
       console.warn('Backend API recordViolation error, trying Supabase/localStorage:', e);
     }
 
-    // 2. Fallback to Supabase / LocalStorage
+    // 2. Fallback to Supabase / LocalStorage tracking
     let currentCount = 0;
+    const localKey = `codearena_violation_count_${attemptId}`;
+    const savedLocal = localStorage.getItem(localKey);
+    if (savedLocal) {
+      currentCount = parseInt(savedLocal, 10) || 0;
+    }
+
     try {
-      const { data: attempt } = await supabase
+      const { data: attempt, error } = await supabase
         .from('test_attempts')
         .select('violation_count')
         .eq('id', attemptId)
         .single();
-      if (attempt) currentCount = attempt.violation_count || 0;
+
+      if (!error && attempt && typeof attempt.violation_count === 'number') {
+        currentCount = Math.max(currentCount, attempt.violation_count);
+      }
     } catch (e) {
       console.warn('Supabase recordViolation get error:', e);
-      const savedCount = localStorage.getItem(`violation_count_${attemptId}`);
-      if (savedCount) currentCount = parseInt(savedCount);
     }
 
     const nextCount = currentCount + 1;
-    localStorage.setItem(`violation_count_${attemptId}`, nextCount);
+    localStorage.setItem(localKey, String(nextCount));
 
     try {
       const { data: updatedAttempt, error } = await supabase
@@ -526,10 +533,13 @@ export const studentAPI = {
         .single();
 
       if (!error && updatedAttempt) {
+        const maxV = updatedAttempt.tests?.max_violations ?? 3;
         return {
           data: {
             ...updatedAttempt,
-            max_violations: updatedAttempt.tests?.max_violations ?? 3
+            violation_count: nextCount,
+            max_violations: maxV,
+            auto_submitted: nextCount >= maxV
           }
         };
       }
