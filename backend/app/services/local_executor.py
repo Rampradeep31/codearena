@@ -335,6 +335,19 @@ class LocalCodeExecutor:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> Dict[str, Any]:
         norm_lang = cls.normalize_language(language)
+        from app.config import settings
+
+        # Apply language-specific timeout defaults if generic timeout passed
+        if timeout == DEFAULT_TIMEOUT_SECONDS:
+            if norm_lang == "python":
+                timeout = float(getattr(settings, "TIMEOUT_PYTHON", 3.0))
+            elif norm_lang == "c":
+                timeout = float(getattr(settings, "TIMEOUT_C", 2.0))
+            elif norm_lang == "cpp":
+                timeout = float(getattr(settings, "TIMEOUT_CPP", 2.0))
+            elif norm_lang == "java":
+                timeout = float(getattr(settings, "TIMEOUT_JAVA", 3.0))
+
         logger.info(f"[Execution Module] Starting submission (Language: {norm_lang}, Timeout: {timeout}s)")
 
         if norm_lang not in ("python", "java", "c", "cpp"):
@@ -344,13 +357,13 @@ class LocalCodeExecutor:
                 compile_output=f"Unsupported language: {language}",
                 exit_code=1,
                 exec_time=0.0,
+                memory_kb=0,
                 timed_out=False,
                 expected_output=expected_output,
                 is_compilation_failure=True,
                 language=norm_lang,
             )
 
-        from app.config import settings
         if not getattr(settings, "ALLOW_LOCAL_EXECUTION", True):
             return cls._evaluate_result(
                 stdout="",
@@ -358,6 +371,7 @@ class LocalCodeExecutor:
                 compile_output="",
                 exit_code=1,
                 exec_time=0.0,
+                memory_kb=0,
                 timed_out=False,
                 expected_output=expected_output,
                 is_compilation_failure=False,
@@ -374,13 +388,14 @@ class LocalCodeExecutor:
                 compile_output=blocked_reason,
                 exit_code=1,
                 exec_time=0.0,
+                memory_kb=0,
                 timed_out=False,
                 expected_output=expected_output,
                 is_compilation_failure=True,
                 language=norm_lang,
             )
 
-        memory_limit_kb = int(getattr(settings, "CODE_MEMORY_LIMIT_KB", 0) or 0)
+        memory_limit_kb = int(getattr(settings, "CODE_MEMORY_LIMIT_KB", 262144) or 262144)
 
         # Temporary working directory per submission with automatic cleanup
         with tempfile.TemporaryDirectory(prefix="code_exec_") as temp_dir:
@@ -402,6 +417,7 @@ class LocalCodeExecutor:
                     compile_output="",
                     exit_code=1,
                     exec_time=0.0,
+                    memory_kb=0,
                     timed_out=False,
                     expected_output=expected_output,
                     is_compilation_failure=False,
@@ -416,7 +432,9 @@ class LocalCodeExecutor:
         compile_output: str,
         exit_code: int,
         exec_time: float,
-        timed_out: bool,
+        memory_kb: int = 0,
+        timed_out: bool = False,
+        is_memory_exceeded: bool = False,
         expected_output: Optional[str] = None,
         is_compilation_failure: bool = False,
         is_missing_compiler: bool = False,
@@ -427,6 +445,11 @@ class LocalCodeExecutor:
         clean_stderr = stderr.strip() if stderr else ""
         clean_compile = compile_output.strip() if compile_output else ""
 
+        # OOM detection heuristics from exit codes & stderr
+        if not is_memory_exceeded:
+            if exit_code in (-9, 137, 139) or "OutOfMemory" in clean_stderr or "bad_alloc" in clean_stderr or "MemoryLimitError" in clean_stderr:
+                is_memory_exceeded = True
+
         if is_missing_compiler:
             exec_status = "compiler_not_installed"
             desc = "Compiler Not Installed"
@@ -434,9 +457,13 @@ class LocalCodeExecutor:
             exec_status = "compilation_error"
             desc = "Compilation Error"
         elif timed_out:
-            exec_status = "runtime_error"
-            desc = "Runtime Error"
+            exec_status = "time_limit_exceeded"
+            desc = "Time Limit Exceeded"
             clean_stderr = clean_stderr or "Execution timed out (Time Limit Exceeded)"
+        elif is_memory_exceeded:
+            exec_status = "memory_limit_exceeded"
+            desc = "Memory Limit Exceeded"
+            clean_stderr = clean_stderr or "Memory limit exceeded (Out of Memory)"
         elif exit_code != 0:
             exec_status = "runtime_error"
             desc = "Runtime Error"
@@ -453,7 +480,7 @@ class LocalCodeExecutor:
                 exec_status = "accepted"
                 desc = "Accepted"
 
-        error_msg = clean_stderr or clean_compile if exec_status in ("compilation_error", "runtime_error", "compiler_not_installed") else clean_stderr
+        error_msg = clean_stderr or clean_compile if exec_status in ("compilation_error", "runtime_error", "time_limit_exceeded", "memory_limit_exceeded", "compiler_not_installed") else clean_stderr
 
         rounded_time = round(exec_time, 3)
 
@@ -467,8 +494,8 @@ class LocalCodeExecutor:
             "exit_code": exit_code,
             "executionTime": rounded_time,
             "execution_time": rounded_time,
-            "memory": 0,
-            "memory_used": 0,
+            "memory": memory_kb,
+            "memory_used": memory_kb,
             "language": language,
             "output": stdout,
             "error": error_msg,
@@ -482,8 +509,8 @@ class LocalCodeExecutor:
         timeout: float,
         cwd: str,
         memory_limit_kb: int = 0,
-    ) -> tuple[str, str, int, float, bool]:
-        """Execute a subprocess with stdin, stdout, stderr capture and timeout protection."""
+    ) -> tuple[str, str, int, float, bool, int]:
+        """Execute a subprocess with stdin, stdout, stderr capture, resource limits and memory measurement."""
         start_time = time.perf_counter()
 
         logger.info(f"[Execution Subprocess] Running command: {' '.join(cmd)} (CWD: {cwd})")
@@ -501,18 +528,44 @@ class LocalCodeExecutor:
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             popen_kwargs["start_new_session"] = True
-            if memory_limit_kb > 0:
-                def _limit_memory():
-                    import resource
+            def _limit_resources():
+                import resource
+                if memory_limit_kb > 0:
                     bytes_limit = int(memory_limit_kb) * 1024
-                    resource.setrlimit(resource.RLIMIT_AS, (bytes_limit, bytes_limit))
-                    resource.setrlimit(resource.RLIMIT_DATA, (bytes_limit, bytes_limit))
-                popen_kwargs["preexec_fn"] = _limit_memory
+                    try:
+                        resource.setrlimit(resource.RLIMIT_AS, (bytes_limit, bytes_limit))
+                    except Exception:
+                        pass
+                    try:
+                        resource.setrlimit(resource.RLIMIT_DATA, (bytes_limit, bytes_limit))
+                    except Exception:
+                        pass
+                # Limit process explosion (fork bombs)
+                try:
+                    resource.setrlimit(resource.RLIMIT_NPROC, (64, 64))
+                except Exception:
+                    pass
+                # Limit max file output creation
+                try:
+                    resource.setrlimit(resource.RLIMIT_FSIZE, (10 * 1024 * 1024, 10 * 1024 * 1024))
+                except Exception:
+                    pass
+            popen_kwargs["preexec_fn"] = _limit_resources
 
         try:
             process = subprocess.Popen(cmd, **popen_kwargs)
             stdout, stderr = process.communicate(input=stdin_data, timeout=timeout)
             exec_time = time.perf_counter() - start_time
+
+            # Measure peak RSS memory usage on POSIX
+            memory_kb = 0
+            if sys.platform != "win32":
+                try:
+                    import resource
+                    rusage = resource.getrusage(resource.RUSAGE_CHILDREN)
+                    memory_kb = int(rusage.ru_maxrss)
+                except Exception:
+                    memory_kb = 0
 
             # Cap output sizes to avoid RAM exhaustion
             if len(stdout) > MAX_OUTPUT_BYTES:
@@ -520,17 +573,17 @@ class LocalCodeExecutor:
             if len(stderr) > MAX_OUTPUT_BYTES:
                 stderr = stderr[:MAX_OUTPUT_BYTES] + "\n... [Stderr Truncated]"
 
-            logger.info(f"[Execution Subprocess] Finished in {exec_time:.3f}s with exit code {process.returncode}")
-            return stdout, stderr, process.returncode, exec_time, False
+            logger.info(f"[Execution Subprocess] Finished in {exec_time:.3f}s with exit code {process.returncode} (Peak RSS: {memory_kb} KB)")
+            return stdout, stderr, process.returncode, exec_time, False, memory_kb
         except subprocess.TimeoutExpired:
             exec_time = time.perf_counter() - start_time
             logger.warning(f"[Execution Subprocess] Command timed out after {timeout}s")
             _kill_process_tree(process)
-            return "", "Time Limit Exceeded", 124, exec_time, True
+            return "", "Time Limit Exceeded", 124, exec_time, True, 0
         except Exception as e:
             exec_time = time.perf_counter() - start_time
             logger.error(f"[Execution Subprocess] Exception during execution: {str(e)}")
-            return "", str(e), 1, exec_time, False
+            return "", str(e), 1, exec_time, False, 0
 
     @classmethod
     def _run_python(
@@ -544,7 +597,7 @@ class LocalCodeExecutor:
         python_cmd = _find_python_cmd() or "python"
         cmd = [python_cmd, "-I", py_file]
 
-        stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
+        stdout, stderr, exit_code, exec_time, timed_out, memory_kb = cls._run_subprocess(
             cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
@@ -558,6 +611,7 @@ class LocalCodeExecutor:
             compile_output=stderr if is_compilation_error else "",
             exit_code=exit_code,
             exec_time=exec_time,
+            memory_kb=memory_kb,
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=is_compilation_error,
@@ -581,6 +635,7 @@ class LocalCodeExecutor:
                 compile_output=err_msg,
                 exit_code=1,
                 exec_time=0.0,
+                memory_kb=0,
                 timed_out=False,
                 expected_output=expected_output,
                 is_missing_compiler=True,
@@ -598,7 +653,7 @@ class LocalCodeExecutor:
 
         # Step 1: Compile javac Main.java (or ClassName.java) in temp_dir
         compile_cmd = [javac_bin, java_filename]
-        stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
+        stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c, memory_c = cls._run_subprocess(
             compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
@@ -610,6 +665,7 @@ class LocalCodeExecutor:
                 compile_output=stderr_c or "Java compilation failed",
                 exit_code=exit_code_c,
                 exec_time=compile_time,
+                memory_kb=memory_c,
                 timed_out=timed_out_c,
                 expected_output=expected_output,
                 is_compilation_failure=True,
@@ -618,7 +674,7 @@ class LocalCodeExecutor:
 
         # Step 2: Run java -cp . ClassName in temp_dir
         run_cmd = [java_bin, "-cp", ".", class_name]
-        stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
+        stdout, stderr, exit_code, exec_time, timed_out, memory_kb = cls._run_subprocess(
             run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
@@ -628,6 +684,7 @@ class LocalCodeExecutor:
             compile_output="",
             exit_code=exit_code,
             exec_time=exec_time,
+            memory_kb=memory_kb,
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=False,
@@ -649,6 +706,7 @@ class LocalCodeExecutor:
                 compile_output=err_msg,
                 exit_code=1,
                 exec_time=0.0,
+                memory_kb=0,
                 timed_out=False,
                 expected_output=expected_output,
                 is_missing_compiler=True,
@@ -666,7 +724,7 @@ class LocalCodeExecutor:
 
         # Step 1: Compile gcc main.c -o main (or main.exe)
         compile_cmd = [gcc_bin, c_filename, "-o", exe_filename, "-lm"]
-        stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
+        stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c, memory_c = cls._run_subprocess(
             compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
@@ -678,6 +736,7 @@ class LocalCodeExecutor:
                 compile_output=stderr_c or "C compilation failed",
                 exit_code=exit_code_c,
                 exec_time=compile_time,
+                memory_kb=memory_c,
                 timed_out=timed_out_c,
                 expected_output=expected_output,
                 is_compilation_failure=True,
@@ -686,7 +745,7 @@ class LocalCodeExecutor:
 
         # Step 2: Run executable (main.exe on Windows, ./main on Linux)
         run_cmd = [exe_path] if is_win else [f"./{exe_filename}"]
-        stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
+        stdout, stderr, exit_code, exec_time, timed_out, memory_kb = cls._run_subprocess(
             run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
@@ -696,6 +755,7 @@ class LocalCodeExecutor:
             compile_output="",
             exit_code=exit_code,
             exec_time=exec_time,
+            memory_kb=memory_kb,
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=False,
@@ -717,6 +777,7 @@ class LocalCodeExecutor:
                 compile_output=err_msg,
                 exit_code=1,
                 exec_time=0.0,
+                memory_kb=0,
                 timed_out=False,
                 expected_output=expected_output,
                 is_missing_compiler=True,
@@ -734,7 +795,7 @@ class LocalCodeExecutor:
 
         # Step 1: Compile g++ main.cpp -o main (or main.exe)
         compile_cmd = [gpp_bin, cpp_filename, "-o", exe_filename, "-lm"]
-        stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c = cls._run_subprocess(
+        stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c, memory_c = cls._run_subprocess(
             compile_cmd, "", timeout, temp_dir, memory_limit_kb
         )
 
@@ -746,6 +807,7 @@ class LocalCodeExecutor:
                 compile_output=stderr_c or "C++ compilation failed",
                 exit_code=exit_code_c,
                 exec_time=compile_time,
+                memory_kb=memory_c,
                 timed_out=timed_out_c,
                 expected_output=expected_output,
                 is_compilation_failure=True,
@@ -754,7 +816,7 @@ class LocalCodeExecutor:
 
         # Step 2: Run executable (main.exe on Windows, ./main on Linux)
         run_cmd = [exe_path] if is_win else [f"./{exe_filename}"]
-        stdout, stderr, exit_code, exec_time, timed_out = cls._run_subprocess(
+        stdout, stderr, exit_code, exec_time, timed_out, memory_kb = cls._run_subprocess(
             run_cmd, stdin, timeout, temp_dir, memory_limit_kb
         )
 
@@ -764,6 +826,7 @@ class LocalCodeExecutor:
             compile_output="",
             exit_code=exit_code,
             exec_time=exec_time,
+            memory_kb=memory_kb,
             timed_out=timed_out,
             expected_output=expected_output,
             is_compilation_failure=False,

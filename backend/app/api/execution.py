@@ -262,10 +262,14 @@ async def run_code(
         compilation_error = results[0].get("error", "Compilation failed")
 
     passed_count = sum(1 for r in results if r["passed"])
+    max_exec_time = max((r.get("execution_time", 0.0) for r in results), default=0.0)
+    max_memory_kb = max((r.get("memory_used", 0) for r in results), default=0)
+    primary_verdict = results[0].get("status", "unknown") if results else "no_results"
 
     logger.info(
-        f"[API /code/run Finished] User ID: {user.id} | Passed: {passed_count}/{len(results)} | "
-        f"Compilation Status: {'error' if compilation_error else 'success'}"
+        f"[JUDGE LOG] Action=RUN | StudentID={user.id} | AttemptID={data.attempt_id} | QuestionID={data.question_id} | "
+        f"Language={data.language} | Verdict={primary_verdict} | Passed={passed_count}/{len(results)} | "
+        f"Time={max_exec_time:.3f}s | Memory={max_memory_kb}KB"
     )
 
     return CodeRunResponse(
@@ -365,9 +369,13 @@ async def submit_code(
     else:
         status_str = "wrong_answer"
 
+    max_exec_time = max((r.get("execution_time", 0.0) for r in results), default=0.0)
+    max_memory_kb = max((r.get("memory_used", 0) for r in results), default=0)
+
     logger.info(
-        f"[API /code/submit Finished] User ID: {user.id} | Score: {score}/{q_marks} | "
-        f"Passed: {passed_count}/{total_count} | Status: {status_str}"
+        f"[JUDGE LOG] Action=SUBMIT | StudentID={user.id} | AttemptID={data.attempt_id} | QuestionID={data.question_id} | "
+        f"Language={data.language} | Score={score}/{q_marks} | Passed={passed_count}/{total_count} | "
+        f"Verdict={status_str} | Time={max_exec_time:.3f}s | Memory={max_memory_kb}KB"
     )
 
     return CodeSubmitResponse(

@@ -8,6 +8,17 @@ from app.services.local_executor import LocalCodeExecutor
 logger = logging.getLogger("execution_service")
 
 
+_execution_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _execution_semaphore
+    if _execution_semaphore is None:
+        max_concurrent = int(getattr(settings, "MAX_CONCURRENT_EXECUTIONS", 20) or 20)
+        _execution_semaphore = asyncio.Semaphore(max_concurrent)
+    return _execution_semaphore
+
+
 async def execute_code(
     source_code: str,
     language: str,
@@ -15,20 +26,22 @@ async def execute_code(
     expected_output: Optional[str] = None,
 ) -> dict:
     """
-    Execute code using local compiler/interpreter engine.
+    Execute code using local compiler/interpreter engine with concurrency throttling.
     Returns Judge0-compatible execution result dictionary.
     """
     timeout = float(getattr(settings, "CODE_TIMEOUT_SECONDS", 5))
+    sem = _get_semaphore()
 
-    # Run blocking execution in thread pool to maintain async responsiveness
-    res = await asyncio.to_thread(
-        LocalCodeExecutor.execute,
-        source_code=source_code,
-        language=language,
-        stdin=stdin,
-        expected_output=expected_output,
-        timeout=timeout,
-    )
+    # Throttled async execution in thread pool to prevent system overload
+    async with sem:
+        res = await asyncio.to_thread(
+            LocalCodeExecutor.execute,
+            source_code=source_code,
+            language=language,
+            stdin=stdin,
+            expected_output=expected_output,
+            timeout=timeout,
+        )
     return res
 
 
