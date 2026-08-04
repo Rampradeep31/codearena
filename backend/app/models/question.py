@@ -20,7 +20,7 @@ class Question(Base):
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     difficulty: Mapped[Difficulty] = mapped_column(Enum(Difficulty), nullable=False)
     marks: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
-    topic: Mapped[str] = mapped_column(String(100), nullable=False)
+    topic: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="General", server_default="General")
     input_format: Mapped[str] = mapped_column(Text, nullable=True)
     output_format: Mapped[str] = mapped_column(Text, nullable=True)
     constraints: Mapped[str] = mapped_column(Text, nullable=True)

@@ -149,13 +149,14 @@ async def _fetch_question(db: AsyncSession, question_id: int) -> Question:
         title=f"Coding Challenge #{question_id}",
         statement="Solve the problem using standard IO.",
         difficulty="easy",
-        marks=50
+        marks=50,
+        topic="General"
     )
     db.add(q)
     try:
         await db.flush()
     except Exception:
-        pass
+        await db.rollback()
     return q
 
 

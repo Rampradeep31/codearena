@@ -120,7 +120,7 @@ class QuestionCreate(BaseModel):
     statement: str
     difficulty: str  # easy, medium, hard
     marks: int = Field(10, ge=1)
-    topic: str
+    topic: Optional[str] = "General"
     input_format: Optional[str] = None
     output_format: Optional[str] = None
     constraints: Optional[str] = None
