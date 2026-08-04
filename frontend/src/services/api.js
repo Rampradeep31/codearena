@@ -554,8 +554,18 @@ export const studentAPI = {
     }
 
     // 2. Fallback to Supabase / LocalStorage tracking
+    let currentUser = null;
+    try {
+      const userStr = localStorage.getItem('user');
+      if (userStr) currentUser = JSON.parse(userStr);
+    } catch (e) {
+      console.error(e);
+    }
+
+    const userKey = currentUser ? (currentUser.register_number || currentUser.id) : 'anon';
+    const localKey = `codearena_violation_count_u${userKey}_att_${attemptId}`;
+
     let currentCount = 0;
-    const localKey = `codearena_violation_count_${attemptId}`;
     const savedLocal = localStorage.getItem(localKey);
     if (savedLocal) {
       currentCount = parseInt(savedLocal, 10) || 0;
