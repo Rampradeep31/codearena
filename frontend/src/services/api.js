@@ -108,6 +108,10 @@ export const authAPI = {
     const studentRecord = {
       name: studentData.name.trim(),
       register_number: regNo,
+      email: studentData.email || `${regNo.toLowerCase()}@codearena.edu`,
+      password_hash: 'student123',
+      status: 'ACTIVE',
+      is_active: true,
       department: studentData.department || 'AI & DS',
       section: studentData.section || 'A',
       year: yearNum,
