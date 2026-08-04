@@ -11,8 +11,8 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
-    PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:${PATH}"
+    JAVA_HOME=/usr/lib/jvm/default-java \
+    PATH="/usr/lib/jvm/default-java/bin:/usr/local/bin:${PATH}"
 
 # Install system dependencies & compilers (Java JDK 17, GCC, G++, build-essential, make, git, curl)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,7 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     procps \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && JDK_DIR=$(dirname $(dirname $(readlink -f $(which javac)))) \
+    && mkdir -p /usr/lib/jvm \
+    && ln -sfn "$JDK_DIR" /usr/lib/jvm/default-java
 
 # Verify every judge compiler is present. If any version check fails, the
 # image build fails loudly instead of deploying a broken judge.

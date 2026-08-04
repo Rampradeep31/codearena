@@ -174,6 +174,29 @@ def _find_javac() -> Optional[str]:
                     candidate = os.path.join(base_dir, folder, "bin", "javac.exe")
                     if os.path.exists(candidate):
                         return candidate
+    else:
+        linux_paths = [
+            "/usr/bin/javac",
+            "/usr/local/bin/javac",
+            "/usr/lib/jvm/default-java/bin/javac",
+            "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+            "/usr/lib/jvm/java-17-openjdk-arm64/bin/javac",
+            "/usr/lib/jvm/java-11-openjdk-amd64/bin/javac",
+            "/usr/lib/jvm/java-11-openjdk-arm64/bin/javac",
+            "/usr/lib/jvm/java-21-openjdk-amd64/bin/javac",
+            "/usr/lib/jvm/java-21-openjdk-arm64/bin/javac",
+        ]
+        for path in linux_paths:
+            if os.path.exists(path):
+                return path
+        if os.path.exists("/usr/lib/jvm"):
+            try:
+                for folder in os.listdir("/usr/lib/jvm"):
+                    candidate = os.path.join("/usr/lib/jvm", folder, "bin", "javac")
+                    if os.path.exists(candidate):
+                        return candidate
+            except Exception:
+                pass
     return None
 
 
@@ -197,6 +220,29 @@ def _find_java() -> Optional[str]:
                     candidate = os.path.join(base_dir, folder, "bin", "java.exe")
                     if os.path.exists(candidate):
                         return candidate
+    else:
+        linux_paths = [
+            "/usr/bin/java",
+            "/usr/local/bin/java",
+            "/usr/lib/jvm/default-java/bin/java",
+            "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+            "/usr/lib/jvm/java-17-openjdk-arm64/bin/java",
+            "/usr/lib/jvm/java-11-openjdk-amd64/bin/java",
+            "/usr/lib/jvm/java-11-openjdk-arm64/bin/java",
+            "/usr/lib/jvm/java-21-openjdk-amd64/bin/java",
+            "/usr/lib/jvm/java-21-openjdk-arm64/bin/java",
+        ]
+        for path in linux_paths:
+            if os.path.exists(path):
+                return path
+        if os.path.exists("/usr/lib/jvm"):
+            try:
+                for folder in os.listdir("/usr/lib/jvm"):
+                    candidate = os.path.join("/usr/lib/jvm", folder, "bin", "java")
+                    if os.path.exists(candidate):
+                        return candidate
+            except Exception:
+                pass
     return None
 
 
