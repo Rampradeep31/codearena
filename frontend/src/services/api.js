@@ -148,12 +148,18 @@ export const studentAPI = {
       console.error(e);
     }
 
+    // Clean legacy non-scoped keys to prevent global completion leaks
+    localStorage.removeItem('codearena_attempt_status_test_1');
+    localStorage.removeItem('codearena_attempt_submitted_at_test_1');
+    localStorage.removeItem('codearena_attempt_id_test_1');
+
+    const userKey = currentUser ? (currentUser.register_number || currentUser.id) : null;
+
     const getLocalStatus = (testId) => {
-      const status = localStorage.getItem(`codearena_attempt_status_test_${testId}`) ||
-                     localStorage.getItem(`codearena_attempt_status_${testId}`);
-      const submittedAt = localStorage.getItem(`codearena_attempt_submitted_at_test_${testId}`) ||
-                          localStorage.getItem(`codearena_attempt_submitted_at_${testId}`);
-      const attemptId = localStorage.getItem(`codearena_attempt_id_test_${testId}`);
+      if (!userKey) return { status: null, submittedAt: null, attemptId: null };
+      const status = localStorage.getItem(`codearena_attempt_status_u${userKey}_t${testId}`);
+      const submittedAt = localStorage.getItem(`codearena_attempt_submitted_at_u${userKey}_t${testId}`);
+      const attemptId = localStorage.getItem(`codearena_attempt_id_u${userKey}_t${testId}`);
       return { status, submittedAt, attemptId };
     };
 
@@ -178,7 +184,7 @@ export const studentAPI = {
             end_time: t.end_time
           };
 
-          // 1. Local Storage Status Check
+          // 1. User-Scoped Local Storage Check
           const localInfo = getLocalStatus(t.id);
           if (localInfo.status) {
             testData.attempt_status = localInfo.status;
@@ -186,7 +192,7 @@ export const studentAPI = {
             if (localInfo.attemptId) testData.attempt_id = localInfo.attemptId;
           }
 
-          // 2. Supabase Attempt Status Check
+          // 2. Supabase User-Scoped Attempt Check
           if (currentUser) {
             try {
               const { data: attempts } = await supabase
@@ -196,15 +202,21 @@ export const studentAPI = {
                 .order('id', { ascending: false });
 
               if (attempts && attempts.length > 0) {
-                const userAttempt = attempts.find(a => a.user_id === currentUser.id) || attempts[0];
-                testData.attempt_id = testData.attempt_id || userAttempt.id;
+                // STRICTLY match only this current logged-in user
+                const userAttempt = attempts.find(a => 
+                  (currentUser.id && String(a.user_id) === String(currentUser.id)) ||
+                  (currentUser.register_number && a.register_number === currentUser.register_number)
+                );
                 
-                if (userAttempt.status === 'submitted' || userAttempt.status === 'auto_submitted') {
-                  testData.attempt_status = userAttempt.status;
-                  testData.attempt_submitted_at = userAttempt.submitted_at || localInfo.submittedAt;
-                } else if (!testData.attempt_status) {
-                  testData.attempt_status = userAttempt.status;
-                  testData.attempt_submitted_at = userAttempt.submitted_at;
+                if (userAttempt) {
+                  testData.attempt_id = userAttempt.id;
+                  if (userAttempt.status === 'submitted' || userAttempt.status === 'auto_submitted') {
+                    testData.attempt_status = userAttempt.status;
+                    testData.attempt_submitted_at = userAttempt.submitted_at || localInfo.submittedAt;
+                  } else if (!testData.attempt_status) {
+                    testData.attempt_status = userAttempt.status;
+                    testData.attempt_submitted_at = userAttempt.submitted_at;
+                  }
                 }
               }
             } catch (attErr) {
@@ -233,7 +245,7 @@ export const studentAPI = {
       console.warn('Supabase getTests error:', e);
     }
 
-    // Default Fallback with Local Storage Status Check
+    // Default Fallback with User-Scoped Local Storage Status Check
     const localInfo = getLocalStatus(1);
     const isSubmitted = localInfo.status === 'submitted' || localInfo.status === 'auto_submitted';
 
@@ -248,9 +260,9 @@ export const studentAPI = {
       max_violations: 3,
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
-      attempt_status: localInfo.status || (isSubmitted ? 'submitted' : null),
+      attempt_status: localInfo.status,
       attempt_submitted_at: localInfo.submittedAt,
-      attempt_id: localInfo.attemptId || 1
+      attempt_id: localInfo.attemptId || (isSubmitted ? 1 : null)
     };
 
     return {
@@ -600,13 +612,31 @@ export const studentAPI = {
 
   finishTest: async (attemptId, status = 'submitted') => {
     const submittedAt = new Date().toISOString();
+
+    let currentUser = null;
+    try {
+      const userStr = localStorage.getItem('user');
+      if (userStr) currentUser = JSON.parse(userStr);
+    } catch (e) {
+      console.error(e);
+    }
+
+    const userKey = currentUser ? (currentUser.register_number || currentUser.id) : null;
     
-    // Always persist submission status to localStorage immediately
+    // Always persist submission status to localStorage immediately scoped to attemptId and user
     localStorage.setItem(`codearena_attempt_status_${attemptId}`, status);
     localStorage.setItem(`codearena_attempt_submitted_at_${attemptId}`, submittedAt);
-    localStorage.setItem(`codearena_attempt_status_test_1`, status);
-    localStorage.setItem(`codearena_attempt_submitted_at_test_1`, submittedAt);
-    localStorage.setItem(`codearena_attempt_id_test_1`, String(attemptId));
+
+    if (userKey) {
+      localStorage.setItem(`codearena_attempt_status_u${userKey}_t1`, status);
+      localStorage.setItem(`codearena_attempt_submitted_at_u${userKey}_t1`, submittedAt);
+      localStorage.setItem(`codearena_attempt_id_u${userKey}_t1`, String(attemptId));
+    }
+
+    // Clean legacy non-scoped keys so they don't affect other student accounts
+    localStorage.removeItem('codearena_attempt_status_test_1');
+    localStorage.removeItem('codearena_attempt_submitted_at_test_1');
+    localStorage.removeItem('codearena_attempt_id_test_1');
 
     try {
       const { data, error } = await supabase
