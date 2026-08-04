@@ -70,11 +70,15 @@ export const authAPI = {
   studentEntry: async (studentData) => {
     const regNo = studentData.register_number.trim().toUpperCase();
 
-    // Parse numeric year
-    let yearNum = 1;
+    // Parse numeric year accurately ("Second Year" -> 2, "Third Year" -> 3)
+    let yearNum = 2;
     if (studentData.year) {
-      const digits = String(studentData.year).replace(/\D/g, '');
-      yearNum = digits ? parseInt(digits) : 1;
+      const yearStr = String(studentData.year).toLowerCase();
+      if (yearStr.includes('third') || yearStr.includes('3')) {
+        yearNum = 3;
+      } else {
+        yearNum = 2;
+      }
     }
 
     const studentRecord = {
@@ -978,23 +982,30 @@ export const adminAPI = {
         console.warn('Local student registry parse error:', e);
       }
 
+      const parseYear = (val) => {
+        if (!val) return 2;
+        const str = String(val).toLowerCase();
+        if (str.includes('third') || str.includes('3')) return 3;
+        return 2;
+      };
+
       // Combine Supabase users and local registered students
       const allStudentsMap = new Map();
       
       (dbUsers || []).forEach(u => {
         const roleStr = String(u.role || '').toLowerCase();
         if (roleStr === 'student' || roleStr !== 'admin') {
-          const regKey = u.register_number || u.email || String(u.id);
-          const yearVal = (u.year === 3 || u.year === '3' || String(u.year).toLowerCase().includes('third')) ? 3 : 2;
-          allStudentsMap.set(regKey, { ...u, year: yearVal });
+          const regKey = u.register_number ? u.register_number.trim().toUpperCase() : `user_${u.id}`;
+          const yearVal = parseYear(u.year);
+          allStudentsMap.set(regKey, { ...u, year: yearVal, section: u.section || 'A', department: u.department || 'AI & DS' });
         }
       });
 
       (localStudents || []).forEach(u => {
-        const regKey = u.register_number || String(u.id);
-        const yearVal = (u.year === 3 || u.year === '3' || String(u.year).toLowerCase().includes('third')) ? 3 : 2;
+        const regKey = u.register_number ? u.register_number.trim().toUpperCase() : `user_${u.id}`;
+        const yearVal = parseYear(u.year);
         if (!allStudentsMap.has(regKey)) {
-          allStudentsMap.set(regKey, { ...u, year: yearVal });
+          allStudentsMap.set(regKey, { ...u, year: yearVal, section: u.section || 'A', department: u.department || 'AI & DS' });
         } else {
           allStudentsMap.set(regKey, { ...allStudentsMap.get(regKey), ...u, year: yearVal });
         }

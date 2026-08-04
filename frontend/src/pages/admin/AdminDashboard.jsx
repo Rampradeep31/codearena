@@ -140,8 +140,8 @@ export default function AdminDashboard() {
   const activeAttempts = filteredAttempts.filter(a => a.status === 'in_progress' && new Date(a.expires_at) > now);
 
   const totalStudentsCount = filteredStudents.length;
-  const secondYearStudentsCount = filteredStudents.filter(s => s.year === 2).length;
-  const thirdYearStudentsCount = filteredStudents.filter(s => s.year === 3).length;
+  const secondYearStudentsCount = filteredStudents.filter(s => s.year === 2 || String(s.year) === '2' || String(s.year).toLowerCase().includes('second')).length;
+  const thirdYearStudentsCount = filteredStudents.filter(s => s.year === 3 || String(s.year) === '3' || String(s.year).toLowerCase().includes('third')).length;
 
   let averageScore = 0;
   let passPercentage = 0;
