@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import Editor from '@monaco-editor/react';
+import CodeEditor from '../../components/editor/Editor';
+import OutputPanel from '../../components/editor/OutputPanel';
 import { useAuth } from '../../context/AuthContext';
 import { studentAPI, codeAPI } from '../../services/api';
 import toast from 'react-hot-toast';
@@ -632,54 +633,28 @@ export default function ExamInterface() {
           </div>
         </div>
 
-        {/* Right: Code Editor */}
-        <div className="flex-1 flex flex-col min-h-0">
-          {/* Language Selector & Actions */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-dark-700/50 bg-dark-900/50">
-            <select value={language} onChange={(e) => {
-              const nextLang = e.target.value;
-              setLanguage(nextLang);
-              setCode(LANG_MAP[nextLang]?.template || '');
+        {/* Right: Monaco Code Editor */}
+        <div className="flex-1 flex flex-col min-h-0 bg-slate-950 p-2">
+          <CodeEditor
+            initialCode={code}
+            initialLanguage={language}
+            attemptId={attemptId}
+            questionId={questions[currentIdx]?.question_id || questions[currentIdx]?.id || currentIdx + 1}
+            onCodeChange={(newCode, newLang) => {
+              setCode(newCode);
+              setLanguage(newLang);
             }}
-              className="px-2 py-1 bg-dark-800 border border-dark-600/50 rounded text-xs text-white focus:outline-none focus:border-brand-500">
-              {Object.entries(LANG_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-
-            <div className="flex items-center gap-2">
-              <button onClick={handleRun} disabled={running || !code.trim()} className="flex items-center gap-1.5 px-3 py-1.5 bg-dark-700 hover:bg-dark-600 disabled:opacity-40 text-white rounded text-xs font-medium transition-colors cursor-pointer">
-                {running ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <HiOutlinePlay className="w-3.5 h-3.5" />}
-                {running ? 'Running...' : 'Run Code'}
-              </button>
-              <button onClick={handleSubmit} disabled={submittingCode || !code.trim()} className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white rounded text-xs font-medium transition-colors cursor-pointer">
-                {submittingCode ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <HiOutlineUpload className="w-3.5 h-3.5" />}
-                {submittingCode ? 'Submitting...' : 'Submit'}
-              </button>
-            </div>
-          </div>
-
-          {/* Monaco Editor */}
-          <div className="flex-1 min-h-0 bg-[#1e1e1e]">
-            <Editor
-              height="100%"
-              language={LANG_MAP[language]?.monaco || 'python'}
-              value={code}
-              onChange={(val) => setCode(val || '')}
-              theme="vs-dark"
-              loading={<div className="flex items-center justify-center h-full text-dark-400 text-sm">Loading Code Editor...</div>}
-              options={{
-                fontSize: 14,
-                fontFamily: "'JetBrains Mono', monospace",
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                lineNumbers: 'on',
-                roundedSelection: true,
-                padding: { top: 12 },
-                automaticLayout: true,
-                tabSize: 4,
-                wordWrap: 'on',
-              }}
-            />
-          </div>
+            onLanguageChange={(newLang, newCode) => {
+              setLanguage(newLang);
+              setCode(newCode);
+            }}
+            onRun={handleRun}
+            onSubmit={handleSubmit}
+            running={running}
+            submitting={submittingCode}
+            readOnly={attempt?.status === 'submitted' || attempt?.status === 'auto_submitted' || timeLeft <= 0}
+            compilationError={runResult?.compilation_error || runResult?.error}
+          />
         </div>
       </div>
 
