@@ -1,0 +1,40 @@
+# ==============================================================================
+# Render Infrastructure as Code (Blueprint) for CodeArena Backend
+# Service Type: Docker Web Service
+# ==============================================================================
+
+services:
+  - type: web
+    name: codearena-api
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ALLOW_LOCAL_EXECUTION
+        value: "True"
+      - key: JWT_ALGORITHM
+        value: "HS256"
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "480"
+      - key: CORS_ORIGINS
+        value: "http://localhost:5173,https://codearena-indol.vercel.app"
+      - key: JWT_SECRET
+        generateWith: 32
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
