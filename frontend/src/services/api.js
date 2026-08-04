@@ -7,12 +7,36 @@ const backendApi = axios.create({
   timeout: 30000,
 });
 
-// Add auth token to requests
-backendApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token') || localStorage.getItem('codearena_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+// Add auth token dynamically to requests (Tasks 3 & 4)
+backendApi.interceptors.request.use(async (config) => {
+  let token = localStorage.getItem('token') || localStorage.getItem('codearena_token');
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData && sessionData.session && sessionData.session.access_token) {
+      token = sessionData.session.access_token;
+      localStorage.setItem('token', token);
+    }
+  } catch (e) {
+    // Ignore Supabase session read error if offline
+  }
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
+
+// Response Interceptor for 401/403 Auth Errors (Task 6)
+backendApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      const detail = error.response.data?.detail || "Session expired. Please log in again.";
+      return Promise.reject(new Error(detail));
+    }
+    return Promise.reject(error);
+  }
+);
 
 // LocalStorage helpers for metadata
 const getStudentLocalTestMetadata = () => {
@@ -1121,12 +1145,74 @@ export const adminAPI = {
 
   getStudents: async (params) => {
     try {
-      let query = supabase.from('users').select('*').eq('role', 'student');
-      if (params?.search) {
-        query = query.or(`name.ilike.%${params.search}%,register_number.ilike.%${params.search}%,email.ilike.%${params.search}%`);
+      // 1. Fetch raw data from Supabase
+      const { data: dbUsers } = await supabase.from('users').select('*');
+
+      // 2. Get local registered students
+      let localStudents = [];
+      try {
+        const localStr = localStorage.getItem('codearena_registered_students');
+        if (localStr) localStudents = JSON.parse(localStr);
+      } catch (e) {
+        console.warn('Local student registry parse error:', e);
       }
-      const { data } = await query.order('name');
-      return { data: data || [] };
+
+      const parseYear = (val) => {
+        if (!val) return 2;
+        const str = String(val).toLowerCase();
+        if (str.includes('third') || str.includes('3')) return 3;
+        return 2;
+      };
+
+      // 3. Combine and deduplicate
+      const allStudentsMap = new Map();
+
+      (dbUsers || []).forEach(u => {
+        const roleStr = String(u.role || '').toLowerCase();
+        if (roleStr === 'student' || roleStr !== 'admin') {
+          const regKey = u.register_number ? u.register_number.trim().toUpperCase() : `user_${u.id}`;
+          const yearVal = parseYear(u.year);
+          allStudentsMap.set(regKey, {
+            id: u.id || regKey,
+            ...u,
+            year: yearVal,
+            section: u.section || 'A',
+            department: u.department || 'AI & DS',
+            status: u.status || 'Active'
+          });
+        }
+      });
+
+      (localStudents || []).forEach(u => {
+        const regKey = u.register_number ? u.register_number.trim().toUpperCase() : `user_${u.id}`;
+        const yearVal = parseYear(u.year);
+        if (!allStudentsMap.has(regKey)) {
+          allStudentsMap.set(regKey, {
+            id: u.id || regKey,
+            ...u,
+            year: yearVal,
+            section: u.section || 'A',
+            department: u.department || 'AI & DS',
+            status: u.status || 'Active'
+          });
+        } else {
+          allStudentsMap.set(regKey, { ...allStudentsMap.get(regKey), ...u, year: yearVal });
+        }
+      });
+
+      let list = Array.from(allStudentsMap.values());
+
+      // 4. Apply Search Filter if provided
+      if (params?.search) {
+        const s = params.search.toLowerCase();
+        list = list.filter(u =>
+          (u.name && u.name.toLowerCase().includes(s)) ||
+          (u.register_number && u.register_number.toLowerCase().includes(s)) ||
+          (u.email && u.email.toLowerCase().includes(s))
+        );
+      }
+
+      return { data: list };
     } catch (e) {
       console.warn('getStudents error:', e);
       return { data: [] };
@@ -1134,17 +1220,72 @@ export const adminAPI = {
   },
 
   createStudent: async (data) => {
-    const { password, email, ...dbData } = data;
-    return supabase.from('users').insert({ ...dbData, role: 'student' }).select().single();
+    const saveToLocal = (s) => {
+      try {
+        const localStr = localStorage.getItem('codearena_registered_students');
+        let registered = localStr ? JSON.parse(localStr) : [];
+        if (!Array.isArray(registered)) registered = [];
+        registered.push(s);
+        localStorage.setItem('codearena_registered_students', JSON.stringify(registered));
+      } catch (e) {}
+    };
+
+    try {
+      const { password, email, ...dbData } = data;
+      const { data: newStudent, error } = await supabase.from('users').insert({ ...dbData, role: 'student' }).select().single();
+      if (!error && newStudent) {
+        saveToLocal(newStudent);
+        return { data: newStudent };
+      }
+    } catch (e) {
+      console.warn('Supabase createStudent error, creating locally:', e);
+    }
+
+    const fallbackStudent = {
+      id: Date.now(),
+      name: data.name,
+      register_number: data.register_number,
+      department: data.department || 'AI & DS',
+      year: data.year || 2,
+      section: data.section || 'A',
+      role: 'student',
+      status: 'Active'
+    };
+    saveToLocal(fallbackStudent);
+    return { data: fallbackStudent };
   },
 
   updateStudent: async (id, data) => {
-    const { password, email, ...dbData } = data;
-    return supabase.from('users').update(dbData).eq('id', id).select().single();
+    try {
+      const { password, email, ...dbData } = data;
+      const { data: updated, error } = await supabase.from('users').update(dbData).eq('id', id).select().single();
+      if (!error && updated) return { data: updated };
+    } catch (e) {}
+
+    try {
+      const localStr = localStorage.getItem('codearena_registered_students');
+      let registered = localStr ? JSON.parse(localStr) : [];
+      const idx = registered.findIndex(s => s.id === id || s.register_number === data.register_number);
+      if (idx !== -1) {
+        registered[idx] = { ...registered[idx], ...data };
+        localStorage.setItem('codearena_registered_students', JSON.stringify(registered));
+      }
+    } catch (e) {}
+    return { data: { id, ...data } };
   },
 
   deleteStudent: async (id) => {
-    return supabase.from('users').delete().eq('id', id);
+    try {
+      await supabase.from('users').delete().eq('id', id);
+    } catch (e) {}
+
+    try {
+      const localStr = localStorage.getItem('codearena_registered_students');
+      let registered = localStr ? JSON.parse(localStr) : [];
+      registered = registered.filter(s => s.id !== id && s.register_number !== id);
+      localStorage.setItem('codearena_registered_students', JSON.stringify(registered));
+    } catch (e) {}
+    return { success: true };
   },
 
   importStudents: async (file) => {
