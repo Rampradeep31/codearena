@@ -27,6 +27,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Verify every judge compiler is present. If any version check fails, the
+# image build fails loudly instead of deploying a broken judge.
+RUN python3 --version \
+    && gcc --version | head -n 1 \
+    && g++ --version | head -n 1 \
+    && javac -version 2>&1 \
+    && java -version 2>&1 \
+    && test -x "$(command -v python3)" \
+    && test -x "$(command -v gcc)" \
+    && test -x "$(command -v g++)" \
+    && test -x "$(command -v javac)" \
+    && test -x "$(command -v java)"
+
 # Set working directory inside container
 WORKDIR /app
 

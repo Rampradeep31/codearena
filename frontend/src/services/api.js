@@ -1,11 +1,49 @@
 import { supabase } from './supabaseClient';
 import axios from 'axios';
 
+// Issue 7: Every request must go through VITE_API_URL. No hardcoded /
+// stale Render URLs. Fallbacks: the canonical Render blueprinted service
+// (codearena-api from render.yaml) in production, or the Vite proxy in dev.
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? 'https://codearena-api.onrender.com' : '/api');
+
 const backendApi = axios.create({
-  baseURL: import.meta.env.PROD ? 'https://codearena-api-e6ih.onrender.com' : '/api',
+  baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 30000,
+  timeout: 60000,
 });
+
+// Extract the real backend error message from any axios error so the UI
+// never shows a generic "service unavailable" message.
+export function getErrorMessage(error, fallback = 'Request failed') {
+  if (!error) return fallback;
+  if (error?.response?.data?.detail) return String(error.response.data.detail);
+  if (Array.isArray(error?.response?.data?.detail)) {
+    return error.response.data.detail.map((d) => d.msg || String(d)).join('; ');
+  }
+  if (error?.response?.data?.message) return String(error.response.data.message);
+  if (error?.response?.status) {
+    return `Code execution backend returned ${error.response.status} (${error.response.statusText || 'error'}).`;
+  }
+  if (error?.message) return String(error.message);
+  return fallback;
+}
+
+// Reject with an Error that carries the real server detail AND the HTTP
+// status, so callers can distinguish auth failures (401/403) from execution
+// failures (500) instead of turning everything into "Compilation Error".
+function rejectWithDetail(error) {
+  const status = error?.response?.status;
+  if (status === 401 || status === 403) {
+    error.status = status;
+    error.message = getErrorMessage(error, 'Session expired. Please log in again.');
+    return Promise.reject(error);
+  }
+  error.status = status;
+  error.message = getErrorMessage(error, error?.message || 'Request failed');
+  return Promise.reject(error);
+}
 
 // Add auth token dynamically to requests (Tasks 3 & 4)
 backendApi.interceptors.request.use(async (config) => {
@@ -26,16 +64,12 @@ backendApi.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Response Interceptor for 401/403 Auth Errors (Task 6)
+// Response Interceptor for auth + backend errors.
+// Issue 3 & 8: 401/403 are surfaceed as authentication failures (never
+// "Compilation Error"); all other failures keep the real server detail.
 backendApi.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-      const detail = error.response.data?.detail || "Session expired. Please log in again.";
-      return Promise.reject(new Error(detail));
-    }
-    return Promise.reject(error);
-  }
+  (error) => rejectWithDetail(error)
 );
 
 // LocalStorage helpers for metadata
@@ -724,25 +758,16 @@ export const studentAPI = {
 
 export const codeAPI = {
   runCase: async (data) => {
-    const res = await backendApi.post('/code/run-case', data);
-    return res;
-  },
-  run: async (data) => {
     try {
-      const res = await backendApi.post('/code/run', data);
+      const res = await backendApi.post('/code/run-case', data);
       return res;
     } catch (e) {
-      console.warn('Backend API run error:', e);
-      return {
-        data: {
-          compilation_status: 'error',
-          compilation_error: e.response?.data?.detail || 'Code execution service is unavailable. Please try again after the backend judge is running.',
-          passed: 0,
-          total: 0,
-          results: []
-        }
-      };
+      return Promise.reject(e);
     }
+  },
+  run: async (data) => {
+    const res = await backendApi.post('/code/run', data);
+    return res;
   },
 
   submit: async (data) => {

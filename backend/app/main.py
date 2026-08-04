@@ -36,13 +36,15 @@ logger = logging.getLogger("main")
 origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 if "https://codearena-indol.vercel.app" not in origins:
     origins.append("https://codearena-indol.vercel.app")
+if "https://codearena-frontend.onrender.com" not in origins:
+    origins.append("https://codearena-frontend.onrender.com")
 if "http://localhost:5173" not in origins:
     origins.append("http://localhost:5173")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins if origins else ["*"],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://.*\.(vercel\.app|onrender\.com)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

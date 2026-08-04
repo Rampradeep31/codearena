@@ -269,7 +269,8 @@ async def run_code(
     logger.info(
         f"[JUDGE LOG] Action=RUN | StudentID={user.id} | AttemptID={data.attempt_id} | QuestionID={data.question_id} | "
         f"Language={data.language} | Verdict={primary_verdict} | Passed={passed_count}/{len(results)} | "
-        f"Time={max_exec_time:.3f}s | Memory={max_memory_kb}KB"
+        f"Time={max_exec_time:.3f}s | Memory={max_memory_kb}KB | Compiler={results[0].get('compiler') if results else None} | "
+        f"ContainerID={results[0].get('container_id') if results else None}"
     )
 
     return CodeRunResponse(
@@ -375,7 +376,8 @@ async def submit_code(
     logger.info(
         f"[JUDGE LOG] Action=SUBMIT | StudentID={user.id} | AttemptID={data.attempt_id} | QuestionID={data.question_id} | "
         f"Language={data.language} | Score={score}/{q_marks} | Passed={passed_count}/{total_count} | "
-        f"Verdict={status_str} | Time={max_exec_time:.3f}s | Memory={max_memory_kb}KB"
+        f"Verdict={status_str} | Time={max_exec_time:.3f}s | Memory={max_memory_kb}KB | Compiler={results[0].get('compiler') if results else None} | "
+        f"ContainerID={results[0].get('container_id') if results else None}"
     )
 
     return CodeSubmitResponse(

@@ -1,11 +1,24 @@
 import asyncio
 import logging
+import os
+import traceback
 from typing import List, Optional
 from app.config import settings
 from app.models.question import TestCase
 from app.services.local_executor import LocalCodeExecutor
 
 logger = logging.getLogger("execution_service")
+
+
+def _container_id() -> str:
+    """Return the container ID when running inside Docker, else 'local-machine'.
+
+    Docker sets the HOSTNAME environment variable to the container ID.
+    """
+    hostname = os.environ.get("HOSTNAME", "")
+    if hostname and (hostname.startswith("replica-") or len(hostname) == 12 or "/" not in hostname):
+        return hostname
+    return "local-machine"
 
 
 _execution_semaphore: Optional[asyncio.Semaphore] = None
@@ -26,22 +39,40 @@ async def execute_code(
     expected_output: Optional[str] = None,
 ) -> dict:
     """
-    Execute code using local compiler/interpreter engine with concurrency throttling.
-    Returns Judge0-compatible execution result dictionary.
+    Execute code using the in-container compiler/interpreter engine with
+    concurrency throttling. Returns a Judge0-compatible result dictionary.
     """
     timeout = float(getattr(settings, "CODE_TIMEOUT_SECONDS", 5))
     sem = _get_semaphore()
 
     # Throttled async execution in thread pool to prevent system overload
     async with sem:
-        res = await asyncio.to_thread(
-            LocalCodeExecutor.execute,
-            source_code=source_code,
-            language=language,
-            stdin=stdin,
-            expected_output=expected_output,
-            timeout=timeout,
-        )
+        try:
+            res = await asyncio.to_thread(
+                LocalCodeExecutor.execute,
+                source_code=source_code,
+                language=language,
+                stdin=stdin,
+                expected_output=expected_output,
+                timeout=timeout,
+            )
+        except Exception as e:
+            logger.error(
+                f"[JUDGE LOG] Action=EXECUTE_EXCEPTION | Language={language} | "
+                f"ContainerID={_container_id()} | Error={e}\n{traceback.format_exc()}"
+            )
+            res = {
+                "status": "internal_error",
+                "status_description": "Internal Error",
+                "output": "",
+                "stderr": f"Judge internal error: {e}",
+                "error": f"Judge internal error: {e}",
+                "execution_time": 0.0,
+                "memory_used": 0,
+                "exit_code": -1,
+                "container_id": _container_id(),
+            }
+    res["container_id"] = _container_id()
     return res
 
 
@@ -51,20 +82,22 @@ async def run_against_test_cases(
     test_cases: List[TestCase],
 ) -> List[dict]:
     """
-    Run code against test cases.
-    Note: Temporary requirement 5 & 6 specifies ignoring hidden test cases.
-    Evaluates against the primary public / sample expected output.
+    Run code against test cases and grade each one.
+
+    The caller decides which test cases are included:
+      - /code/run    → only public/sample test cases
+      - /code/submit → ALL test cases including hidden ones
+    Every provided test case is executed and graded so hidden test cases
+    count toward the final score.
     """
     results = []
 
     if not test_cases:
         return results
 
-    # Temporarily ignore hidden test cases
-    visible_test_cases = [tc for tc in test_cases if not getattr(tc, "is_hidden", False)]
-    test_cases_to_run = visible_test_cases if visible_test_cases else [test_cases[0]]
+    container_id = _container_id()
 
-    for tc in test_cases_to_run:
+    for tc in test_cases:
         result = await execute_code(
             source_code=source_code,
             language=language,
@@ -108,6 +141,13 @@ async def run_against_test_cases(
 
         passed = (result.get("status") == "accepted") and compare_outputs(actual_output, expected)
 
+        logger.info(
+            f"[JUDGE LOG] Action=EXECUTE_CASE | Language={language} | Verdict={result.get('status')} | "
+            f"Passed={passed} | Time={result.get('execution_time', 0.0):.3f}s | "
+            f"Memory={result.get('memory_used', 0)}KB | Compiler={result.get('compiler')} | "
+            f"ExitCode={result.get('exit_code')} | ContainerID={container_id}"
+        )
+
         results.append({
             "test_case_id": tc.id,
             "passed": passed,
@@ -118,6 +158,8 @@ async def run_against_test_cases(
             "memory_used": result.get("memory_used", 0),
             "status": result.get("status", "error"),
             "error": result.get("error", ""),
+            "compiler": result.get("compiler"),
+            "container_id": result.get("container_id", container_id),
             "is_hidden": getattr(tc, "is_hidden", False),
         })
 

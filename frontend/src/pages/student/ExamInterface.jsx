@@ -3,11 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import CodeEditor from '../../components/editor/Editor';
 import OutputPanel from '../../components/editor/OutputPanel';
 import { useAuth } from '../../context/AuthContext';
-import { studentAPI, codeAPI } from '../../services/api';
+import { studentAPI, codeAPI, getErrorMessage } from '../../services/api';
 import toast from 'react-hot-toast';
 import WebcamProctor from '../../components/WebcamProctor';
 import LeetCodeTestPanel from '../../components/execution/LeetCodeTestPanel';
-import { executionClient } from '../../services/executionClient';
+import { executionClient, getVerdict } from '../../services/executionClient';
 import {
   HiOutlineCode, HiOutlinePlay, HiOutlineUpload, HiOutlineClock,
   HiOutlineChevronLeft, HiOutlineChevronRight, HiOutlineShieldExclamation,
@@ -21,6 +21,15 @@ const LANG_MAP = {
   c: { label: 'C', monaco: 'c', template: '#include <stdio.h>\n\nint main() {\n    // Write your solution here\n    return 0;\n}\n' },
   cpp: { label: 'C++', monaco: 'cpp', template: '#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}\n' },
 };
+
+// ─── Issue 11: staged execution UX ───────────────────────────────
+const JUDGE_STAGES = [
+  'Connecting to Judge...',
+  'Preparing Container...',
+  'Compiling...',
+  'Running...',
+  'Evaluating Test Cases...',
+];
 
 export default function ExamInterface() {
   const { attemptId } = useParams();
@@ -48,12 +57,33 @@ export default function ExamInterface() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+  const [judgeStage, setJudgeStage] = useState(-1);
 
   // Refs
   const autoSaveTimer = useRef(null);
   const lastSavedCode = useRef('');
   const violationDebounce = useRef(0);
   const violationCounts = useRef({ face_turned: 0, multiple_faces: 0 });
+  const judgeStageTimer = useRef(null);
+
+  // Advance the "Connecting -> Container -> Compiling -> Running -> Evaluating"
+  // progress indicator while a run/submit request is in flight.
+  const startJudgeStages = () => {
+    setJudgeStage(0);
+    if (judgeStageTimer.current) clearInterval(judgeStageTimer.current);
+    judgeStageTimer.current = setInterval(() => {
+      setJudgeStage((prev) => (prev >= JUDGE_STAGES.length - 1 ? prev : prev + 1));
+    }, 900);
+  };
+
+  const stopJudgeStages = () => {
+    if (judgeStageTimer.current) clearInterval(judgeStageTimer.current);
+    judgeStageTimer.current = null;
+    setJudgeStage(-1);
+  };
+
+  // Clean up the stage timer on unmount
+  useEffect(() => () => stopJudgeStages(), []);
 
   // ─── Load Data ─────────────────────────────────
   useEffect(() => {
@@ -331,7 +361,7 @@ export default function ExamInterface() {
     const token = localStorage.getItem('token');
     if (!token) {
       toast.error("Session expired. Please log in again.");
-      navigate('/student/entry');
+      navigate('/login');
       return;
     }
 
@@ -342,6 +372,7 @@ export default function ExamInterface() {
     setRunning(true);
     setRunResult(null);
     saveCode();
+    startJudgeStages();
     try {
       if (activeCaseIdx === 'custom') {
         const result = await executionClient.runCase({
@@ -365,9 +396,31 @@ export default function ExamInterface() {
         setActiveCaseIdx(firstFail !== undefined && firstFail !== -1 ? firstFail : 0);
       }
     } catch (err) {
-      const errMsg = err.message || err.response?.data?.detail || 'Execution error';
-      toast.error(errMsg);
-    } finally { setRunning(false); }
+      // Issue 8: expired/invalid JWT must surface as an authentication error
+      // and redirect to login — never as a fake compilation failure.
+      if (err?.status === 401 || err?.status === 403) {
+        toast.error(getErrorMessage(err, 'Session expired. Please log in again.'));
+        setTimeout(() => navigate('/login', { replace: true }), 1200);
+      } else {
+        // Issue 3: show the real backend error (compiler messages, runtime
+        // tracebacks, timeouts...) instead of a generic popup.
+        const realMessage = getErrorMessage(err, 'Code execution failed on the judge backend.');
+        setRunResult({
+          status: err?.status === 504 ? 'internal_error' : 'internal_error',
+          status_description: 'Execution Failed',
+          compilation_status: 'error',
+          compilation_error: realMessage,
+          error: realMessage,
+          results: [],
+          passed: 0,
+          total: 0,
+          language,
+        });
+      }
+    } finally {
+      stopJudgeStages();
+      setRunning(false);
+    }
   };
 
   // ─── Submit Code ──────────────────────────────
@@ -375,7 +428,7 @@ export default function ExamInterface() {
     const token = localStorage.getItem('token');
     if (!token) {
       toast.error("Session expired. Please log in again.");
-      navigate('/student/entry');
+      navigate('/login');
       return;
     }
 
@@ -385,6 +438,7 @@ export default function ExamInterface() {
 
     setSubmittingCode(true);
     saveCode();
+    startJudgeStages();
     try {
       const result = await executionClient.submitCode({
         attempt_id: parseInt(attemptId),
@@ -402,7 +456,8 @@ export default function ExamInterface() {
         return newQs;
       });
       
-      toast.success('Code submitted successfully!');
+      const verdict = getVerdict(result) || 'Submitted';
+      toast.success(`Code submitted — ${verdict}`);
       
       // Optionally move to next unsubmitted question
       const nextIdx = questions.findIndex((q, idx) => idx > currentIdx && !q.is_submitted);
@@ -410,8 +465,16 @@ export default function ExamInterface() {
         switchQuestion(nextIdx);
       }
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Submission error');
-    } finally { setSubmittingCode(false); }
+      if (err?.status === 401 || err?.status === 403) {
+        toast.error(getErrorMessage(err, 'Session expired. Please log in again.'));
+        setTimeout(() => navigate('/login', { replace: true }), 1200);
+      } else {
+        toast.error(getErrorMessage(err, 'Submission error'));
+      }
+    } finally {
+      stopJudgeStages();
+      setSubmittingCode(false);
+    }
   };
 
   // ─── Finish Test ──────────────────────────────
@@ -636,6 +699,7 @@ export default function ExamInterface() {
         {/* Right: Monaco Code Editor */}
         <div className="flex-1 flex flex-col min-h-0 bg-slate-950 p-2">
           <CodeEditor
+            key={`${attemptId}-${questions[currentIdx]?.question_id || questions[currentIdx]?.id || currentIdx + 1}`}
             initialCode={code}
             initialLanguage={language}
             attemptId={attemptId}
@@ -756,36 +820,46 @@ export default function ExamInterface() {
               ) : (
                 /* Test Result View (LeetCode Style Pop-up) */
                 <div className="space-y-4">
-                  {runResult.compilation_status === 'error' || runResult.compilation_error ? (
-                    <div>
-                      <h3 className="text-base font-bold text-red-500 flex items-center gap-2 mb-2">
-                        <HiOutlineXCircle className="w-5 h-5" /> Compilation Error
-                      </h3>
-                      <pre className="bg-red-500/10 border border-red-500/20 text-red-400 p-3.5 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-48">
-                        {runResult.compilation_error || runResult.error || 'Compilation Error'}
-                      </pre>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Verdict Header & Runtime */}
-                      <div className="flex items-center justify-between pb-1 border-b border-dark-800">
-                        <h3
-                          className={`text-xl font-extrabold tracking-tight ${
-                            runResult.passed === runResult.total && runResult.total > 0
-                              ? 'text-emerald-500'
-                              : 'text-red-500'
-                          }`}
-                        >
-                          {runResult.passed === runResult.total && runResult.total > 0
-                            ? 'Accepted'
-                            : 'Wrong Answer'}
-                        </h3>
-                        {runResult.results?.[activeCaseIdx]?.execution_time !== undefined && (
-                          <span className="text-xs text-dark-400 font-mono font-medium">
-                            Runtime: {Math.round((runResult.results[activeCaseIdx].execution_time || 0) * 1000)} ms
-                          </span>
+                  {(() => {
+                    const verdict = getVerdict(runResult) || '';
+                    const V = String(verdict).toLowerCase();
+                    const isOk = verdict === 'Accepted';
+                    const verdictColor = isOk
+                      ? 'text-emerald-500'
+                      : V.includes('limit') ? 'text-amber-500'
+                      : 'text-red-500';
+                    const verdictIcon = isOk
+                      ? <HiOutlineCheckCircle className="w-5 h-5" />
+                      : <HiOutlineXCircle className="w-5 h-5" />;
+                    const detailError = runResult.compilation_error || runResult.error || (runResult.results?.[0]?.error) || null;
+                    const shownCase = runResult.results?.[activeCaseIdx] || runResult.results?.[0];
+                    return (
+                      <>
+                        {/* Verdict Header & Runtime/Memory */}
+                        <div className="flex items-center justify-between pb-1 border-b border-dark-800">
+                          <h3 className={`text-xl font-extrabold tracking-tight flex items-center gap-2 ${verdictColor}`}>
+                            {verdictIcon}
+                            {verdict || 'Result'}
+                          </h3>
+                          <div className="flex items-center gap-3 text-xs text-dark-400 font-mono font-medium">
+                            {shownCase?.execution_time !== undefined && (
+                              <span>Runtime: {Math.round((shownCase.execution_time || 0) * 1000)} ms</span>
+                            )}
+                            {shownCase?.memory_used !== undefined && (
+                              <span>Memory: {shownCase.memory_used || 0} KB</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Real error details — compiler output, runtime tracebacks, etc. */}
+                        {detailError && (
+                          <pre className="bg-red-500/10 border border-red-500/20 text-red-400 p-3.5 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-56">
+                            {detailError}
+                          </pre>
                         )}
-                      </div>
+                      </>
+                    );
+                  })()}
 
                       {/* Case Pill Buttons */}
                       <div className="flex items-center gap-2">
@@ -854,8 +928,6 @@ export default function ExamInterface() {
                           </div>
                         </div>
                       )}
-                    </>
-                  )}
                 </div>
               )}
             </div>
@@ -868,6 +940,32 @@ export default function ExamInterface() {
               >
                 Close Window
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Judge Progress Overlay — Issue 11 staged execution UX */}
+      {judgeStage >= 0 && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9998] flex items-center justify-center p-4">
+          <div className="bg-dark-900 border border-dark-700/60 rounded-2xl max-w-sm w-full p-6 shadow-2xl animate-scale-up">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+              <h3 className="text-sm font-bold text-white">Judge is processing your code</h3>
+            </div>
+            <div className="space-y-2.5">
+              {JUDGE_STAGES.map((stage, idx) => (
+                <div key={stage} className={`flex items-center gap-2.5 text-xs transition-colors ${idx <= judgeStage ? 'text-brand-400' : 'text-dark-500'}`}>
+                  {idx < judgeStage ? (
+                    <HiOutlineCheck className="w-3.5 h-3.5 text-emerald-500" />
+                  ) : idx === judgeStage ? (
+                    <div className="w-3.5 h-3.5 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
+                  ) : (
+                    <div className="w-3.5 h-3.5 rounded-full bg-dark-700" />
+                  )}
+                  {stage}
+                </div>
+              ))}
             </div>
           </div>
         </div>

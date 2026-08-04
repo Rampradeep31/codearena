@@ -6,6 +6,7 @@ import shutil
 import logging
 import platform
 import tempfile
+import traceback
 import subprocess
 from typing import Dict, Any, Optional
 
@@ -119,6 +120,27 @@ def _kill_process_tree(process: subprocess.Popen):
         process.wait()
     except Exception:
         pass
+
+
+def _container_id() -> str:
+    """Return the Docker container ID when running inside Docker.
+
+    Docker sets HOSTNAME to a 12-character container ID (or a Render
+    replica-* hostname). Falls back to 'local-machine' outside Docker.
+    """
+    hostname = os.environ.get("HOSTNAME", "").strip()
+    if hostname:
+        if hostname.startswith("replica-") or "/" not in hostname:
+            return hostname
+    return "local-machine"
+
+
+COMPILER_LABELS = {
+    "python": "Python 3",
+    "java": "OpenJDK javac/java",
+    "c": "gcc",
+    "cpp": "g++",
+}
 
 
 def _find_python_cmd() -> Optional[str]:
@@ -325,6 +347,14 @@ class LocalCodeExecutor:
             "compilers": cls.check_compilers(),
         }
 
+    @staticmethod
+    def _finalize(result: Dict[str, Any], norm_lang: str) -> Dict[str, Any]:
+        """Attach compiler + container metadata to an execution result."""
+        result = dict(result or {})
+        result["compiler"] = COMPILER_LABELS.get(norm_lang, norm_lang)
+        result["container_id"] = _container_id()
+        return result
+
     @classmethod
     def execute(
         cls,
@@ -348,10 +378,13 @@ class LocalCodeExecutor:
             elif norm_lang == "java":
                 timeout = float(getattr(settings, "TIMEOUT_JAVA", 3.0))
 
-        logger.info(f"[Execution Module] Starting submission (Language: {norm_lang}, Timeout: {timeout}s)")
+        logger.info(
+            f"[Execution Module] Starting submission (Language: {norm_lang}, Timeout: {timeout}s, "
+            f"Container: {_container_id()})"
+        )
 
         if norm_lang not in ("python", "java", "c", "cpp"):
-            return cls._evaluate_result(
+            return cls._finalize(cls._evaluate_result(
                 stdout="",
                 stderr=f"Unsupported language: {language}",
                 compile_output=f"Unsupported language: {language}",
@@ -362,10 +395,10 @@ class LocalCodeExecutor:
                 expected_output=expected_output,
                 is_compilation_failure=True,
                 language=norm_lang,
-            )
+            ), norm_lang)
 
         if not getattr(settings, "ALLOW_LOCAL_EXECUTION", True):
-            return cls._evaluate_result(
+            return cls._finalize(cls._evaluate_result(
                 stdout="",
                 stderr="Code execution is disabled on this server",
                 compile_output="",
@@ -376,13 +409,13 @@ class LocalCodeExecutor:
                 expected_output=expected_output,
                 is_compilation_failure=False,
                 language=norm_lang,
-            )
+            ), norm_lang)
 
         # Static security filter (defense-in-depth)
         blocked_reason = _scan_for_blocked_code(source_code, norm_lang)
         if blocked_reason:
             logger.warning(f"[Execution Module] Blocked code submission ({norm_lang}): {blocked_reason}")
-            return cls._evaluate_result(
+            return cls._finalize(cls._evaluate_result(
                 stdout="",
                 stderr=blocked_reason,
                 compile_output=blocked_reason,
@@ -393,7 +426,7 @@ class LocalCodeExecutor:
                 expected_output=expected_output,
                 is_compilation_failure=True,
                 language=norm_lang,
-            )
+            ), norm_lang)
 
         memory_limit_kb = int(getattr(settings, "CODE_MEMORY_LIMIT_KB", 262144) or 262144)
 
@@ -402,16 +435,24 @@ class LocalCodeExecutor:
             logger.info(f"[Execution Module] Created isolated temp directory: {temp_dir}")
             try:
                 if norm_lang == "python":
-                    return cls._run_python(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
+                    res = cls._run_python(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
                 elif norm_lang == "java":
-                    return cls._run_java(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
+                    res = cls._run_java(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
                 elif norm_lang == "c":
-                    return cls._run_c(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
+                    res = cls._run_c(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
                 elif norm_lang == "cpp":
-                    return cls._run_cpp(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
+                    res = cls._run_cpp(source_code, stdin, expected_output, timeout, temp_dir, memory_limit_kb)
+                else:
+                    res = cls._evaluate_result(
+                        stdout="", stderr="Unsupported language", compile_output="",
+                        exit_code=1, exec_time=0.0, memory_kb=0, timed_out=False,
+                        expected_output=expected_output, is_compilation_failure=True,
+                        language=norm_lang,
+                    )
+                return cls._finalize(res, norm_lang)
             except Exception as e:
                 logger.error(f"[Execution Module] Unexpected execution exception: {str(e)}", exc_info=True)
-                return cls._evaluate_result(
+                return cls._finalize(cls._evaluate_result(
                     stdout="",
                     stderr=str(e),
                     compile_output="",
@@ -422,7 +463,7 @@ class LocalCodeExecutor:
                     expected_output=expected_output,
                     is_compilation_failure=False,
                     language=norm_lang,
-                )
+                ), norm_lang)
 
     @classmethod
     def _evaluate_result(
@@ -577,12 +618,14 @@ class LocalCodeExecutor:
             return stdout, stderr, process.returncode, exec_time, False, memory_kb
         except subprocess.TimeoutExpired:
             exec_time = time.perf_counter() - start_time
-            logger.warning(f"[Execution Subprocess] Command timed out after {timeout}s")
+            logger.warning(f"[Execution Subprocess] Command timed out after {timeout}s: {' '.join(cmd)}")
             _kill_process_tree(process)
             return "", "Time Limit Exceeded", 124, exec_time, True, 0
         except Exception as e:
             exec_time = time.perf_counter() - start_time
-            logger.error(f"[Execution Subprocess] Exception during execution: {str(e)}")
+            logger.error(
+                f"[Execution Subprocess] Exception during execution: {str(e)}\n{traceback.format_exc()}"
+            )
             return "", str(e), 1, exec_time, False, 0
 
     @classmethod
@@ -651,10 +694,16 @@ class LocalCodeExecutor:
         with open(java_file, "w", encoding="utf-8") as f:
             f.write(source_code)
 
+        # IMPORTANT (Issue 5): the JVM reserves a very large *virtual* address
+        # space. Enforcing RLIMIT_AS (used for the C/Python runtimes) crashes
+        # both `javac` and `java` with "Could not reserve enough space for
+        # object heap". We therefore skip RLIMIT_AS for Java and enforce the
+        # memory limit exclusively through the JVM heap flag (-Xmx).
+
         # Step 1: Compile javac Main.java (or ClassName.java) in temp_dir
-        compile_cmd = [javac_bin, java_filename]
+        compile_cmd = [javac_bin, "-J-Xmx384m", java_filename]
         stdout_c, stderr_c, exit_code_c, compile_time, timed_out_c, memory_c = cls._run_subprocess(
-            compile_cmd, "", timeout, temp_dir, memory_limit_kb
+            compile_cmd, "", timeout, temp_dir, 0
         )
 
         if exit_code_c != 0 or timed_out_c:
@@ -672,10 +721,12 @@ class LocalCodeExecutor:
                 language="java",
             )
 
-        # Step 2: Run java -cp . ClassName in temp_dir
-        run_cmd = [java_bin, "-cp", ".", class_name]
+        # Step 2: Run java -Xmx<limit>m -cp . ClassName in temp_dir (memory
+        # limit enforced by the JVM heap instead of RLIMIT_AS).
+        heap_mb = max(int(memory_limit_kb) // 1024 - 64, 128) if memory_limit_kb > 0 else 256
+        run_cmd = [java_bin, f"-Xmx{heap_mb}m", "-Dfile.encoding=UTF-8", "-cp", ".", class_name]
         stdout, stderr, exit_code, exec_time, timed_out, memory_kb = cls._run_subprocess(
-            run_cmd, stdin, timeout, temp_dir, memory_limit_kb
+            run_cmd, stdin, timeout, temp_dir, 0
         )
 
         return cls._evaluate_result(

@@ -1,9 +1,11 @@
 # ==============================================================================
-# Render Infrastructure as Code (Blueprint) for CodeArena Backend
-# Service Type: Docker Web Service
+# Render Infrastructure as Code (Blueprint) for CodeArena
+# Backend:  Docker Web Service (FastAPI + in-container compilers)
+# Frontend: Static Site (React SPA) with SPA rewrite via public/static.json
 # ==============================================================================
 
 services:
+  # ── Backend ────────────────────────────────────────────────────────────────
   - type: web
     name: codearena-api
     env: docker
@@ -20,8 +22,10 @@ services:
         value: "HS256"
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "480"
+      - key: MAX_CONCURRENT_EXECUTIONS
+        value: "20"
       - key: CORS_ORIGINS
-        value: "http://localhost:5173,https://codearena-indol.vercel.app"
+        value: "http://localhost:5173,https://codearena-indol.vercel.app,https://codearena-frontend.onrender.com"
       - key: JWT_SECRET
         generateWith: 32
       - key: DATABASE_URL
@@ -38,3 +42,25 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+
+  # ── Frontend (Render Static Site) ──────────────────────────────────────────
+  - type: web
+    name: codearena-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install --legacy-peer-deps && npm run build
+    staticPublishPath: dist
+    plan: free
+    region: singapore
+    autoDeploy: true
+    envVars:
+      - key: VITE_API_URL
+        value: "https://codearena-api.onrender.com"
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
