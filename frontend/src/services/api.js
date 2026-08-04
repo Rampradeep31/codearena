@@ -459,16 +459,21 @@ export const studentAPI = {
           const savedLanguage = localStorage.getItem(`lang_${attemptId}_${q.id}`) || 'python';
           
           // Filter test cases: ONLY keep public ones (is_hidden is false/null)
-          // and slice it to AT MOST 2 test cases to prevent leaking,
-          // and delete is_hidden property from each testcase
+          // and slice it to AT MOST 2 test cases to prevent leaking
           let publicTestCases = (q.test_cases || [])
             .filter(tc => !tc.is_hidden)
-            .slice(0, 2)
-            .map(tc => {
-              const cleanTc = { ...tc };
-              delete cleanTc.is_hidden;
-              return cleanTc;
-            });
+            .slice(0, 2);
+
+          // If all test cases were marked as hidden, take the first 2 test cases as sample test cases
+          if (publicTestCases.length === 0 && q.test_cases && q.test_cases.length > 0) {
+            publicTestCases = q.test_cases.slice(0, 2);
+          }
+
+          publicTestCases = publicTestCases.map(tc => {
+            const cleanTc = { ...tc };
+            delete cleanTc.is_hidden;
+            return cleanTc;
+          });
 
           if (publicTestCases.length === 0 && (q.sample_input || q.sample_output)) {
             publicTestCases = [{

@@ -233,6 +233,12 @@ async def run_code(
     public_test_cases = await _fetch_test_cases(db, data.question_id, include_hidden=False)
 
     if not public_test_cases:
+        # Fallback: if no non-hidden test cases exist, fetch the first available test case
+        all_cases = await _fetch_test_cases(db, data.question_id, include_hidden=True)
+        if all_cases:
+            public_test_cases = [all_cases[0]]
+
+    if not public_test_cases:
         # Fallback: run against the question's sample input/output when defined.
         question = await _fetch_question(db, data.question_id)
         if question and (question.sample_input or question.sample_output):
