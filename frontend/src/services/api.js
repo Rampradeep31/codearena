@@ -86,10 +86,28 @@ export const authAPI = {
       role: 'student'
     };
 
+    const saveToLocalRegistry = (u) => {
+      try {
+        const localStr = localStorage.getItem('codearena_registered_students');
+        let registered = localStr ? JSON.parse(localStr) : [];
+        if (!Array.isArray(registered)) registered = [];
+        const idx = registered.findIndex(s => s.register_number === u.register_number);
+        if (idx !== -1) {
+          registered[idx] = { ...registered[idx], ...u };
+        } else {
+          registered.push(u);
+        }
+        localStorage.setItem('codearena_registered_students', JSON.stringify(registered));
+      } catch (e) {
+        console.warn('Local student registry save error:', e);
+      }
+    };
+
     // 1. Try Backend API first if available
     try {
       const res = await backendApi.post('/auth/student-entry', studentData);
       if (res.data && res.data.user) {
+        saveToLocalRegistry(res.data.user);
         return res;
       }
     } catch (e) {
@@ -105,6 +123,7 @@ export const authAPI = {
         .single();
 
       if (!error && user) {
+        saveToLocalRegistry(user);
         return {
           data: {
             access_token: 'sb_token_' + user.id,
@@ -120,12 +139,14 @@ export const authAPI = {
       console.warn("Supabase studentEntry exception:", e);
     }
 
-    // 3. Resilient Fallback to Local Student Entry (works when Supabase RLS/table permissions fail)
+    // 3. Resilient Fallback to Local Student Entry
     const fallbackId = Math.abs(regNo.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) || Date.now();
     const fallbackUser = {
       id: fallbackId,
       ...studentRecord
     };
+
+    saveToLocalRegistry(fallbackUser);
 
     return {
       data: {
@@ -934,19 +955,52 @@ export const adminAPI = {
   getDashboard: async () => {
     try {
       // 1. Fetch raw data from Supabase
-      const [studentsRes, testsRes, questionsRes, attemptsRes, submissionsRes] = await Promise.all([
-        supabase.from('users').select('*').eq('role', 'student'),
+      const [usersRes, testsRes, questionsRes, attemptsRes, submissionsRes] = await Promise.all([
+        supabase.from('users').select('*'),
         supabase.from('tests').select('*'),
         supabase.from('questions').select('*'),
         supabase.from('test_attempts').select('*'),
         supabase.from('submissions').select('*')
       ]);
 
-      const students = studentsRes.data || [];
+      const dbUsers = usersRes.data || [];
       const rawTests = testsRes.data || [];
       const rawQuestions = questionsRes.data || [];
       const attempts = attemptsRes.data || [];
       const submissions = submissionsRes.data || [];
+
+      // Get all local registered students
+      let localStudents = [];
+      try {
+        const localStr = localStorage.getItem('codearena_registered_students');
+        if (localStr) localStudents = JSON.parse(localStr);
+      } catch (e) {
+        console.warn('Local student registry parse error:', e);
+      }
+
+      // Combine Supabase users and local registered students
+      const allStudentsMap = new Map();
+      
+      (dbUsers || []).forEach(u => {
+        const roleStr = String(u.role || '').toLowerCase();
+        if (roleStr === 'student' || roleStr !== 'admin') {
+          const regKey = u.register_number || u.email || String(u.id);
+          const yearVal = (u.year === 3 || u.year === '3' || String(u.year).toLowerCase().includes('third')) ? 3 : 2;
+          allStudentsMap.set(regKey, { ...u, year: yearVal });
+        }
+      });
+
+      (localStudents || []).forEach(u => {
+        const regKey = u.register_number || String(u.id);
+        const yearVal = (u.year === 3 || u.year === '3' || String(u.year).toLowerCase().includes('third')) ? 3 : 2;
+        if (!allStudentsMap.has(regKey)) {
+          allStudentsMap.set(regKey, { ...u, year: yearVal });
+        } else {
+          allStudentsMap.set(regKey, { ...allStudentsMap.get(regKey), ...u, year: yearVal });
+        }
+      });
+
+      const students = Array.from(allStudentsMap.values());
 
       // 2. Fetch/Merge Question Banks
       const banksRes = await adminAPI.getQuestionBanks();

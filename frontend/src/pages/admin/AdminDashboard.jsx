@@ -74,11 +74,21 @@ export default function AdminDashboard() {
   // 1. Year Filter
   if (selectedYear !== 'All') {
     const targetYearNum = selectedYear === 'Third Year' ? 3 : 2;
-    filteredStudents = filteredStudents.filter(s => s.year === targetYearNum);
+    filteredStudents = filteredStudents.filter(s => 
+      s.year === targetYearNum || 
+      String(s.year) === String(targetYearNum) ||
+      (selectedYear === 'Second Year' && String(s.year).toLowerCase().includes('second')) ||
+      (selectedYear === 'Third Year' && String(s.year).toLowerCase().includes('third'))
+    );
     filteredTests = filteredTests.filter(t => t.year === selectedYear);
     filteredAttempts = filteredAttempts.filter(a => {
-      const s = students.find(x => x.id === a.user_id);
-      return s && s.year === targetYearNum;
+      const s = students.find(x => x.id === a.user_id || x.register_number === a.register_number);
+      return s && (
+        s.year === targetYearNum || 
+        String(s.year) === String(targetYearNum) ||
+        (selectedYear === 'Second Year' && String(s.year).toLowerCase().includes('second')) ||
+        (selectedYear === 'Third Year' && String(s.year).toLowerCase().includes('third'))
+      );
     });
     filteredBanks = filteredBanks.filter(b => b.year === selectedYear);
     // filter questions based on bank's year
