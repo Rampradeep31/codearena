@@ -200,8 +200,9 @@ export default function TestEditor() {
   const labelClass = "block text-xs font-medium text-dark-400 mb-1";
   const diffColors = { easy: 'text-emerald-500', medium: 'text-amber-500', hard: 'text-red-500' };
 
-  // Filter banks by year
-  const filteredBanks = banks.filter(b => b.year === form.year && b.status === 'Active');
+  // Filter banks by year only: a bank's lifecycle status ("Active") reflects
+  // currently open exams and must not block scheduling a new exam with it.
+  const filteredBanks = banks.filter(b => b.year === form.year);
 
   // Filter questions by selected bank
   const filteredQuestions = questions.filter(q => q.question_bank_id === parseInt(form.question_bank_id) || q.question_bank_id === form.question_bank_id);

@@ -128,10 +128,9 @@ async def get_student_tests(
         elif ensure_aware(t.end_time) >= now:
             test_data["status"] = "active"
             active.append(test_data)
-        else:
-            # Window ended without a submission: the test is no longer actionable.
-            test_data["status"] = "completed"
-            completed.append(test_data)
+        # NOTE: no fallthrough here. An exam whose window has ended without a
+        # submission is NOT completed: the lifecycle only allows COMPLETED when
+        # the student submits or the attempt timer expires (auto-submit).
 
     return {"upcoming": upcoming, "active": active, "completed": completed}
 

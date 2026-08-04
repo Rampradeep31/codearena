@@ -377,10 +377,10 @@ export const studentAPI = {
             upcoming.push(testData);
           } else if (endTime >= now) {
             active.push(testData);
-          } else {
-            // Window ended without a submission: the test is no longer actionable.
-            completed.push(testData);
           }
+          // NOTE: no fallthrough here. An exam whose window has ended without a
+          // submission is NOT completed: the lifecycle only allows COMPLETED
+          // when the student submits or the attempt timer expires.
         }
 
         return { data: { active, upcoming, completed } };
@@ -667,9 +667,20 @@ export const studentAPI = {
         }
       }
 
-      // Create new in_progress attempt
+      // Create new in_progress attempt. The attempt timer must never outlive
+      // the exam window: expires_at = min(now + duration, test.end_time), so
+      // auto-submit can only fire once the exam has ended.
       const durationMin = 60;
-      const expiresAt = new Date(Date.now() + durationMin * 60 * 1000).toISOString();
+      let expiresAt = new Date(Date.now() + durationMin * 60 * 1000).toISOString();
+      try {
+        const { data: testRow } = await supabase.from('tests').select('end_time').eq('id', testId).maybeSingle();
+        if (testRow && testRow.end_time) {
+          const windowEnd = new Date(testRow.end_time).getTime();
+          expiresAt = new Date(Math.min(Date.now() + durationMin * 60 * 1000, windowEnd)).toISOString();
+        }
+      } catch (e) {
+        console.warn('startTest test fetch error, using default expiry:', e);
+      }
 
       const { data: newAttempt, error } = await supabase
         .from('test_attempts')
@@ -984,7 +995,6 @@ const getLocalBanks = () => {
       title: 'August Month Question Bank',
       description: 'August Month Question Bank with 20 seeded coding challenges',
       year: 'Second Year',
-      status: 'Active',
       created_at: new Date('2026-08-01T12:00:00Z').toISOString(),
       created_by: 'Admin'
     }];
@@ -996,6 +1006,24 @@ const getLocalBanks = () => {
   } catch {
     return [];
   }
+};
+
+// A question bank is ACTIVE only while at least one of its exams has an open
+// window (identical logic to the student dashboard classification). This keeps
+// the admin's "Active" label in sync with the real exam lifecycle instead of a
+// stored flag that can go stale. Returns null when no exams link to the bank
+// (the stored status is then kept).
+const deriveBankStatus = (bank, tests) => {
+  if (!tests) return null;
+  const now = Date.now();
+  const linked = tests.filter(t => {
+    if (t.question_bank_id != null && String(t.question_bank_id) === String(bank.id)) return true;
+    return t.question_bank_id == null && t.year && bank.year && t.year === bank.year;
+  });
+  if (linked.length === 0) return null;
+  if (linked.some(t => new Date(t.start_time) <= now && new Date(t.end_time) >= now)) return 'Active';
+  if (linked.some(t => new Date(t.start_time) > now)) return 'Scheduled';
+  return 'Inactive';
 };
 
 const saveLocalBanks = (banks) => {
@@ -1072,20 +1100,29 @@ const DEFAULT_ALL_QUESTIONS = [
 export const adminAPI = {
   // ─── Question Banks CRUD ────────────────────────────────────
   getQuestionBanks: async (params) => {
+    let list = [];
     try {
       const { data, error } = await supabase.from('question_banks').select('*').order('created_at', { ascending: false });
-      if (!error && data && data.length > 0) {
-        let list = data;
-        if (params?.year) list = list.filter(b => b.year === params.year);
-        if (params?.status) list = list.filter(b => b.status === params.status);
-        if (params?.search) list = list.filter(b => b.title.toLowerCase().includes(params.search.toLowerCase()));
-        return { data: list };
-      }
+      if (!error && data && data.length > 0) list = data;
     } catch (e) {
       console.warn('Supabase question_banks error, falling back to local:', e);
     }
-    
-    let list = getLocalBanks();
+    if (list.length === 0) list = getLocalBanks();
+
+    // Derive each bank's status from its linked exams' real windows so the
+    // admin's "Active" label can never disagree with the student dashboard.
+    let tests = [];
+    try {
+      const { data } = await supabase.from('tests').select('*');
+      if (data) tests = data;
+    } catch (e) {
+      console.warn('Supabase tests fetch error for bank status:', e);
+    }
+    list = list.map(b => {
+      const derived = deriveBankStatus(b, tests);
+      return { ...b, status: derived || b.status || 'Inactive' };
+    });
+
     if (params?.year) list = list.filter(b => b.year === params.year);
     if (params?.status) list = list.filter(b => b.status === params.status);
     if (params?.search) list = list.filter(b => b.title.toLowerCase().includes(params.search.toLowerCase()));

@@ -151,6 +151,8 @@ export default function ExamInterface() {
 
   useEffect(() => {
     if (loading || !attempt || autoSubmittedRef.current) return;
+    // Auto-submit is only legal while the attempt is genuinely in progress.
+    if (String(attempt.status || '').toLowerCase() !== 'in_progress') return;
 
     if (timeLeft <= 0) {
       autoSubmittedRef.current = true;
@@ -282,6 +284,7 @@ export default function ExamInterface() {
 
       if (data.auto_submitted || newCount >= maxViolations) {
         setWarningMsg(`Maximum violations reached (${newCount}/${maxViolations}). Your test has been auto-submitted.`);
+        autoSubmittedRef.current = true;
         try {
           await studentAPI.finishTest(attemptId, 'auto_submitted');
         } catch (e) {
