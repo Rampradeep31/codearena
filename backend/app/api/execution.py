@@ -326,7 +326,7 @@ async def run_single_case(data: CodeRunCaseRequest, user: User = Depends(require
             test_case_id=None, passed=passed, input=data.input,
             expected_output=data.expected_output, actual_output=actual_output,
             execution_time=result.get("execution_time", 0), memory_used=result.get("memory_used", 0), status=status,
-            error=result.get("error")
+            error=result.get("error") or result.get("stderr") or None,
         )],
         passed=1 if passed else 0, total=1,
     )
@@ -413,7 +413,7 @@ async def run_code(
                 execution_time=r["execution_time"],
                 memory_used=r["memory_used"],
                 status=r["status"],
-                error=r.get("error")
+                error=r.get("error") or None,
             ) for r in results
         ],
         passed=passed_count,

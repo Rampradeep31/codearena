@@ -343,7 +343,7 @@ class TestCaseResult(BaseModel):
     execution_time: Optional[float] = None
     memory_used: Optional[int] = None
     status: str = ""
-    error: Optional[str] = None
+    error: Optional[str] = None  # stderr / runtime traceback shown to the student
 
 
 class CodeRunResponse(BaseModel):
