@@ -18,11 +18,16 @@ from app.models.violation import Violation
 from app.schemas.schemas import (
     TestOut, AttemptOut, StudentQuestionOut, QuestionStudentOut,
     TestCasePublicOut, CodeSaveRequest, ViolationCreate, ViolationRecorded, UserOut,
+    FinishAttemptRequest,
 )
 from app.security.dependencies import require_student
 from app.utils import ensure_aware
 
 router = APIRouter(prefix="/student", tags=["Student"])
+
+
+def _status_value(value) -> str:
+    return value.value if hasattr(value, "value") else str(value)
 
 
 async def _attempt_out(db: AsyncSession, attempt: StudentAttempt) -> AttemptOut:
@@ -32,7 +37,7 @@ async def _attempt_out(db: AsyncSession, attempt: StudentAttempt) -> AttemptOut:
     return AttemptOut(
         id=attempt.id, student_id=attempt.student_id, test_id=attempt.test_id,
         started_at=attempt.started_at, expires_at=attempt.expires_at,
-        submitted_at=attempt.submitted_at, status=attempt.status,
+        submitted_at=attempt.submitted_at, status=_status_value(attempt.status),
         violation_count=attempt.violation_count,
         submission_reason=attempt.submission_reason,
         total_score=attempt.total_score, total_possible=attempt.total_possible,
@@ -99,16 +104,22 @@ async def get_student_tests(
 
         if attempt:
             test_data["attempt_id"] = attempt.id
-            test_data["attempt_status"] = attempt.status
+            test_data["attempt_status"] = _status_value(attempt.status)
             test_data["attempt_submitted_at"] = attempt.submitted_at.isoformat() if attempt.submitted_at else None
 
-        if ensure_aware(t.start_time) > now:
-            test_data["status"] = "upcoming"
-            upcoming.append(test_data)
-        elif ensure_aware(t.end_time) < now or (attempt and attempt.status in ("submitted", "auto_submitted")):
+        attempt_status = _status_value(attempt.status) if attempt else None
+        is_submitted = attempt_status in (
+            AttemptStatus.SUBMITTED.value,
+            AttemptStatus.AUTO_SUBMITTED.value,
+        )
+
+        if is_submitted:
             test_data["status"] = "completed"
             completed.append(test_data)
-        else:
+        elif ensure_aware(t.start_time) > now:
+            test_data["status"] = "upcoming"
+            upcoming.append(test_data)
+        elif ensure_aware(t.end_time) >= now:
             test_data["status"] = "active"
             active.append(test_data)
 
@@ -543,6 +554,7 @@ async def record_violation(
 @router.post("/attempts/{attempt_id}/finish")
 async def finish_test(
     attempt_id: int,
+    data: FinishAttemptRequest = FinishAttemptRequest(),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_student),
 ):
@@ -557,16 +569,20 @@ async def finish_test(
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    if attempt.status in ("submitted", "auto_submitted"):
+    if _status_value(attempt.status) in ("submitted", "auto_submitted"):
         raise HTTPException(status_code=400, detail="Already submitted")
 
     now = datetime.now(timezone.utc)
-    attempt.status = AttemptStatus.SUBMITTED
+    requested_status = data.status if data.status in ("submitted", "auto_submitted") else "submitted"
+    attempt.status = (
+        AttemptStatus.AUTO_SUBMITTED
+        if requested_status == "auto_submitted"
+        else AttemptStatus.SUBMITTED
+    )
     attempt.submitted_at = now
-    # Auto-expiry vs manual finish
     attempt.submission_reason = (
         SubmissionReason.TIME_EXPIRED
-        if now > ensure_aware(attempt.expires_at)
+        if requested_status == "auto_submitted" or now > ensure_aware(attempt.expires_at)
         else SubmissionReason.MANUAL
     )
 
@@ -584,8 +600,10 @@ async def finish_test(
 
     return {
         "message": "Test submitted successfully",
+        "attempt_id": attempt.id,
+        "test_id": attempt.test_id,
         "submitted_at": now.isoformat(),
-        "status": "submitted",
+        "status": requested_status,
         "total_score": attempt.total_score,
         "violation_count": attempt.violation_count,
     }

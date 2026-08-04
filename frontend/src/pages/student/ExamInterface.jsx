@@ -94,11 +94,7 @@ export default function ExamInterface() {
 
   const loadAttempt = async () => {
     try {
-      const [attemptRes, questionsRes] = await Promise.all([
-        studentAPI.getAttempt(attemptId),
-        studentAPI.getAttemptQuestions(attemptId),
-      ]);
-
+      const attemptRes = await studentAPI.getAttempt(attemptId);
       const att = attemptRes?.data;
       if (!att) {
         setLoadError('Attempt not found or you do not have access to it.');
@@ -114,6 +110,7 @@ export default function ExamInterface() {
         return;
       }
 
+      const questionsRes = await studentAPI.getAttemptQuestions(attemptId);
       const qs = questionsRes?.data;
       if (!qs || !Array.isArray(qs) || qs.length === 0) {
         setLoadError('No questions were assigned for this attempt. Please contact your instructor.');

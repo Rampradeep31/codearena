@@ -334,6 +334,10 @@ class CodeSaveRequest(BaseModel):
     source_code: str
 
 
+class FinishAttemptRequest(BaseModel):
+    status: str = "submitted"
+
+
 class TestCaseResult(BaseModel):
     test_case_id: Optional[int] = None
     passed: bool

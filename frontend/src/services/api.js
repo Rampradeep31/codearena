@@ -79,6 +79,46 @@ const getStudentLocalTestMetadata = () => {
   } catch (e) { return {}; }
 };
 
+const COMPLETED_ATTEMPT_STATUSES = new Set(['submitted', 'auto_submitted']);
+const ACTIVE_ATTEMPT_STATUS = 'in_progress';
+
+const normalizeAttemptStatus = (status) => String(status || '').toLowerCase();
+const isCompletedAttemptStatus = (status) => COMPLETED_ATTEMPT_STATUSES.has(normalizeAttemptStatus(status));
+
+const getCurrentUser = () => {
+  try {
+    const userStr = localStorage.getItem('user');
+    return userStr ? JSON.parse(userStr) : null;
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+};
+
+const getUserKey = (user) => user ? (user.register_number || user.id) : null;
+
+const attemptBelongsToUser = (attempt, user) => {
+  if (!attempt || !user) return false;
+  return (
+    (user.id && String(attempt.user_id) === String(user.id)) ||
+    (user.id && String(attempt.student_id) === String(user.id)) ||
+    (user.register_number && attempt.register_number === user.register_number)
+  );
+};
+
+const clearLegacyAttemptStatusKeys = () => {
+  localStorage.removeItem('codearena_attempt_status_test_1');
+  localStorage.removeItem('codearena_attempt_submitted_at_test_1');
+  localStorage.removeItem('codearena_attempt_id_test_1');
+};
+
+const writeCompletedAttemptCache = ({ userKey, testId, attemptId, status, submittedAt }) => {
+  if (!userKey || !testId || !isCompletedAttemptStatus(status)) return;
+  localStorage.setItem(`codearena_attempt_status_u${userKey}_t${testId}`, normalizeAttemptStatus(status));
+  localStorage.setItem(`codearena_attempt_submitted_at_u${userKey}_t${testId}`, submittedAt);
+  localStorage.setItem(`codearena_attempt_id_u${userKey}_t${testId}`, String(attemptId));
+};
+
 /**
  * Supabase Cloud Backend Service for CodeArena
  * Connects student entry, exams, questions, and code submissions directly to Supabase PostgreSQL database.
@@ -227,27 +267,28 @@ export const authAPI = {
 // ─── Student API (Tests & Attempts) ───────────────────────────
 export const studentAPI = {
   getTests: async () => {
-    let currentUser = null;
+    const currentUser = getCurrentUser();
+
+    // Clean legacy non-scoped keys to prevent global completion leaks.
+    clearLegacyAttemptStatusKeys();
+
+    const userKey = getUserKey(currentUser);
+
     try {
-      const userStr = localStorage.getItem('user');
-      if (userStr) currentUser = JSON.parse(userStr);
+      const res = await backendApi.get('/student/tests');
+      if (res.data) return res;
     } catch (e) {
-      console.error(e);
+      console.warn('Backend API getTests error, trying Supabase/local:', e);
     }
-
-    // Clean legacy non-scoped keys to prevent global completion leaks
-    localStorage.removeItem('codearena_attempt_status_test_1');
-    localStorage.removeItem('codearena_attempt_submitted_at_test_1');
-    localStorage.removeItem('codearena_attempt_id_test_1');
-
-    const userKey = currentUser ? (currentUser.register_number || currentUser.id) : null;
 
     const getLocalStatus = (testId) => {
       if (!userKey) return { status: null, submittedAt: null, attemptId: null };
       const status = localStorage.getItem(`codearena_attempt_status_u${userKey}_t${testId}`);
       const submittedAt = localStorage.getItem(`codearena_attempt_submitted_at_u${userKey}_t${testId}`);
       const attemptId = localStorage.getItem(`codearena_attempt_id_u${userKey}_t${testId}`);
-      return { status, submittedAt, attemptId };
+      return isCompletedAttemptStatus(status)
+        ? { status: normalizeAttemptStatus(status), submittedAt, attemptId }
+        : { status: null, submittedAt: null, attemptId: null };
     };
 
     try {
@@ -273,7 +314,7 @@ export const studentAPI = {
 
           // 1. User-Scoped Local Storage Check
           const localInfo = getLocalStatus(t.id);
-          if (localInfo.status) {
+          if (isCompletedAttemptStatus(localInfo.status)) {
             testData.attempt_status = localInfo.status;
             testData.attempt_submitted_at = localInfo.submittedAt;
             if (localInfo.attemptId) testData.attempt_id = localInfo.attemptId;
@@ -290,18 +331,16 @@ export const studentAPI = {
 
               if (attempts && attempts.length > 0) {
                 // STRICTLY match only this current logged-in user
-                const userAttempt = attempts.find(a => 
-                  (currentUser.id && String(a.user_id) === String(currentUser.id)) ||
-                  (currentUser.register_number && a.register_number === currentUser.register_number)
-                );
+                const userAttempt = attempts.find(a => attemptBelongsToUser(a, currentUser));
                 
                 if (userAttempt) {
                   testData.attempt_id = userAttempt.id;
-                  if (userAttempt.status === 'submitted' || userAttempt.status === 'auto_submitted') {
-                    testData.attempt_status = userAttempt.status;
+                  const authoritativeStatus = normalizeAttemptStatus(userAttempt.status);
+                  if (isCompletedAttemptStatus(authoritativeStatus)) {
+                    testData.attempt_status = authoritativeStatus;
                     testData.attempt_submitted_at = userAttempt.submitted_at || localInfo.submittedAt;
-                  } else if (!testData.attempt_status) {
-                    testData.attempt_status = userAttempt.status;
+                  } else {
+                    testData.attempt_status = authoritativeStatus || ACTIVE_ATTEMPT_STATUS;
                     testData.attempt_submitted_at = userAttempt.submitted_at;
                   }
                 }
@@ -315,13 +354,13 @@ export const studentAPI = {
           const startTime = new Date(t.start_time || Date.now());
           const endTime = new Date(t.end_time || (Date.now() + 7 * 24 * 3600 * 1000));
 
-          const isSubmitted = testData.attempt_status === 'submitted' || testData.attempt_status === 'auto_submitted';
+          const isSubmitted = isCompletedAttemptStatus(testData.attempt_status);
 
-          if (isSubmitted || endTime < now) {
+          if (isSubmitted) {
             completed.push(testData);
           } else if (startTime > now) {
             upcoming.push(testData);
-          } else {
+          } else if (endTime >= now) {
             active.push(testData);
           }
         }
@@ -334,7 +373,7 @@ export const studentAPI = {
 
     // Default Fallback with User-Scoped Local Storage Status Check
     const localInfo = getLocalStatus(1);
-    const isSubmitted = localInfo.status === 'submitted' || localInfo.status === 'auto_submitted';
+    const isSubmitted = isCompletedAttemptStatus(localInfo.status);
 
     const fallbackTest = {
       id: 1,
@@ -362,6 +401,13 @@ export const studentAPI = {
   },
 
   getAttempt: async (attemptId) => {
+    try {
+      const res = await backendApi.get(`/student/attempts/${attemptId}`);
+      if (res.data) return res;
+    } catch (e) {
+      console.warn('Backend API getAttempt error, trying Supabase/local:', e);
+    }
+
     try {
       const { data, error } = await supabase
         .from('test_attempts')
@@ -394,6 +440,15 @@ export const studentAPI = {
   },
 
   getAttemptQuestions: async (attemptId) => {
+    let questionsPerStudent = 1;
+
+    try {
+      const res = await backendApi.get(`/student/attempts/${attemptId}/questions`);
+      if (res.data) return res;
+    } catch (e) {
+      console.warn('Backend API getAttemptQuestions error, trying Supabase/local:', e);
+    }
+
     try {
       // 1. Get attempt details
       const { data: attempt } = await supabase.from('test_attempts').select('*').eq('id', attemptId).maybeSingle();
@@ -407,7 +462,7 @@ export const studentAPI = {
       const meta = getStudentLocalTestMetadata()[test.id] || { year: 'Second Year', question_bank_id: test.question_bank_id || null, randomize_questions: !!test.randomize_questions };
       const qBankId = meta.question_bank_id;
       const randomize = meta.randomize_questions;
-      const questionsPerStudent = test.questions_per_student || 1;
+      questionsPerStudent = test.questions_per_student || 1;
 
       // 3. Check if questions are already assigned in localStorage for this attempt
       const attemptAssignedKey = `codearena_attempt_questions_${attemptId}`;
@@ -564,13 +619,14 @@ export const studentAPI = {
 
   startTest: async (testId) => {
     try {
-      let currentUser = null;
-      try {
-        const userStr = localStorage.getItem('user');
-        if (userStr) currentUser = JSON.parse(userStr);
-      } catch (e) {
-        console.error(e);
-      }
+      const res = await backendApi.post(`/student/tests/${testId}/start`);
+      if (res.data) return res;
+    } catch (e) {
+      console.warn('Backend API startTest error, trying Supabase/local:', e);
+    }
+
+    try {
+      const currentUser = getCurrentUser();
 
       if (!currentUser) {
         throw new Error("User not authenticated");
@@ -585,7 +641,7 @@ export const studentAPI = {
         .order('id', { ascending: false });
 
       if (existingAttempts && existingAttempts.length > 0) {
-        const activeAttempt = existingAttempts.find(a => a.status === 'in_progress');
+        const activeAttempt = existingAttempts.find(a => normalizeAttemptStatus(a.status) === ACTIVE_ATTEMPT_STATUS);
         if (activeAttempt) {
           return { data: activeAttempt };
         }
@@ -622,6 +678,11 @@ export const studentAPI = {
   saveCode: async (attemptId, data) => {
     localStorage.setItem(`code_${attemptId}_${data.question_id}`, data.source_code);
     localStorage.setItem(`lang_${attemptId}_${data.question_id}`, data.language);
+    try {
+      await backendApi.put(`/student/attempts/${attemptId}/code`, data);
+    } catch (e) {
+      console.warn('Backend API saveCode error, keeping local copy only:', e);
+    }
     return { data: { status: 'saved' } };
   },
 
@@ -713,38 +774,22 @@ export const studentAPI = {
 
   finishTest: async (attemptId, status = 'submitted') => {
     const submittedAt = new Date().toISOString();
+    const finalStatus = isCompletedAttemptStatus(status) ? normalizeAttemptStatus(status) : 'submitted';
+    const currentUser = getCurrentUser();
+    const userKey = getUserKey(currentUser);
+    let attemptTestId = null;
 
-    let currentUser = null;
-    try {
-      const userStr = localStorage.getItem('user');
-      if (userStr) currentUser = JSON.parse(userStr);
-    } catch (e) {
-      console.error(e);
-    }
-
-    const userKey = currentUser ? (currentUser.register_number || currentUser.id) : null;
-    
-    // Always persist submission status to localStorage immediately scoped to attemptId and user
-    localStorage.setItem(`codearena_attempt_status_${attemptId}`, status);
-    localStorage.setItem(`codearena_attempt_submitted_at_${attemptId}`, submittedAt);
-
-    if (userKey) {
-      localStorage.setItem(`codearena_attempt_status_u${userKey}_t1`, status);
-      localStorage.setItem(`codearena_attempt_submitted_at_u${userKey}_t1`, submittedAt);
-      localStorage.setItem(`codearena_attempt_id_u${userKey}_t1`, String(attemptId));
-    }
-
-    // Clean legacy non-scoped keys so they don't affect other student accounts
-    localStorage.removeItem('codearena_attempt_status_test_1');
-    localStorage.removeItem('codearena_attempt_submitted_at_test_1');
-    localStorage.removeItem('codearena_attempt_id_test_1');
+    clearLegacyAttemptStatusKeys();
 
     // Call the backend endpoint to calculate total_score from all submissions
     let calculatedScore = null;
+    let backendData = null;
     try {
-      const backendRes = await backendApi.post(`/student/attempts/${attemptId}/finish`);
-      if (typeof backendRes.data?.total_score === 'number' && backendRes.data.total_score > 0) {
-        calculatedScore = backendRes.data.total_score;
+      const backendRes = await backendApi.post(`/student/attempts/${attemptId}/finish`, { status: finalStatus });
+      backendData = backendRes.data || null;
+      attemptTestId = backendData?.test_id || null;
+      if (typeof backendData?.total_score === 'number' && backendData.total_score > 0) {
+        calculatedScore = backendData.total_score;
       }
     } catch (e) {
       console.warn('Backend finishTest score calculation error:', e);
@@ -775,7 +820,7 @@ export const studentAPI = {
 
     try {
       const updatePayload = {
-        status: status,
+        status: finalStatus,
         submitted_at: submittedAt
       };
       if (calculatedScore !== null && calculatedScore !== undefined) {
@@ -790,12 +835,47 @@ export const studentAPI = {
         .single();
 
       if (!error && data) {
-        return { data: { ...data, total_score: data.score ?? calculatedScore } };
+        attemptTestId = data.test_id || attemptTestId;
+        writeCompletedAttemptCache({
+          userKey,
+          testId: attemptTestId,
+          attemptId,
+          status: finalStatus,
+          submittedAt: data.submitted_at || submittedAt,
+        });
+        return { data: { ...data, status: finalStatus, total_score: data.score ?? calculatedScore } };
       }
     } catch (e) {
       console.warn('Supabase finishTest error:', e);
     }
-    return { data: { status: status, submitted_at: submittedAt, total_score: calculatedScore ?? 0, score: calculatedScore ?? 0 } };
+
+    if (!attemptTestId) {
+      try {
+        const attemptRes = await studentAPI.getAttempt(attemptId);
+        attemptTestId = attemptRes?.data?.test_id || null;
+      } catch (e) {
+        console.warn('Unable to resolve attempt test id for local completion cache:', e);
+      }
+    }
+
+    writeCompletedAttemptCache({
+      userKey,
+      testId: attemptTestId,
+      attemptId,
+      status: finalStatus,
+      submittedAt,
+    });
+
+    return {
+      data: {
+        ...(backendData || {}),
+        status: finalStatus,
+        submitted_at: backendData?.submitted_at || submittedAt,
+        test_id: attemptTestId,
+        total_score: calculatedScore ?? backendData?.total_score ?? 0,
+        score: calculatedScore ?? backendData?.total_score ?? 0,
+      }
+    };
   }
 };
 
