@@ -55,8 +55,8 @@ if "http://localhost:5173" not in origins:
 
 app.add_middleware(
     CORSMiddleware,
-    # Explicit allow-list only: no wildcard regex, no credentials-to-anyone.
-    allow_origins=origins if origins else ["http://localhost:5173"],
+    allow_origins=origins if origins else ["*"],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

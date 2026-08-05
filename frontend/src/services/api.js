@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 
 // Issue 7: Every request must go through VITE_API_URL. No hardcoded /
 // stale Render URLs. Fallbacks: the canonical Render blueprinted service
@@ -26,7 +26,10 @@ export function getErrorMessage(error, fallback = 'Request failed') {
   }
   if (error?.response?.data?.message) return String(error.response.data.message);
   if (error?.response?.status) {
-    return `Code execution backend returned ${error.response.status} (${error.response.statusText || 'error'}).`;
+    return `Backend returned status ${error.response.status} (${error.response.statusText || 'error'}).`;
+  }
+  if (error?.message === 'Network Error' || error?.code === 'ERR_NETWORK' || !error?.response) {
+    return 'Unable to connect to backend server. Please check your internet connection or verify the backend API service is running.';
   }
   if (error?.message) return String(error.message);
   return fallback;
