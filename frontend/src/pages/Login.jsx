@@ -13,6 +13,8 @@ import {
   HiOutlineMail
 } from 'react-icons/hi';
 
+import { getErrorMessage } from '../services/api';
+
 export default function Login() {
   const [isAdminMode, setIsAdminMode] = useState(false);
 
@@ -56,8 +58,9 @@ export default function Login() {
       navigate('/student', { replace: true });
     } catch (err) {
       console.error(err);
-      setError('Error entering assessment. Please check details.');
-      toast.error('Entry failed');
+      const msg = getErrorMessage(err, 'Error entering assessment. Please check details.');
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -78,7 +81,8 @@ export default function Login() {
       toast.success('Admin login successful');
       navigate(role === 'admin' ? '/admin' : '/student', { replace: true });
     } catch (err) {
-      const msg = err.response?.data?.detail || 'Admin login failed.';
+      console.error(err);
+      const msg = getErrorMessage(err, 'Admin login failed.');
       setError(msg);
       toast.error(msg);
     } finally {

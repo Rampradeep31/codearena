@@ -10,6 +10,9 @@ class Difficulty(str, enum.Enum):
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
+    easy = "easy"
+    medium = "medium"
+    hard = "hard"
 
 
 class Question(Base):
@@ -18,7 +21,9 @@ class Question(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     statement: Mapped[str] = mapped_column(Text, nullable=False)
-    difficulty: Mapped[Difficulty] = mapped_column(Enum(Difficulty), nullable=False)
+    difficulty: Mapped[Difficulty] = mapped_column(
+        Enum(Difficulty, native_enum=False, values_callable=lambda obj: [e.value for e in obj]), nullable=False
+    )
     marks: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     topic: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="General", server_default="General")
     input_format: Mapped[str] = mapped_column(Text, nullable=True)

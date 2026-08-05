@@ -74,18 +74,38 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 
-async def create_tables():
-    """Best-effort schema bootstrap for self-managed Postgres.
+async def ensure_admin_user():
+    """Ensure default admin user exists in Postgres on startup."""
+    try:
+        from app.models.user import User, UserRole, UserStatus
+        from app.security.hashing import hash_password
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as session:
+            admin_email = "admin@codearena.com"
+            res = await session.execute(select(User).where(User.email == admin_email))
+            existing = res.scalar_one_or_none()
+            if not existing:
+                admin = User(
+                    email=admin_email,
+                    name="Admin User",
+                    password_hash=hash_password("admin123"),
+                    role=UserRole.ADMIN,
+                    status=UserStatus.ACTIVE,
+                    is_active=True,
+                )
+                session.add(admin)
+                await session.commit()
+                print(f"[STARTUP] Default admin user ensured ({admin_email}).")
+    except Exception as e:
+        print(f"[STARTUP] ensure_admin_user warning: {e}")
 
-    For Supabase the authoritative schema is applied via ``supabase_schema.sql``
-    in the SQL editor; ``create_all(checkfirst=True)`` here only creates tables
-    that are missing, so it is safe in both setups. Failures are logged, never
-    fatal — a missing table will surface as a clear query error instead of a
-    silent startup crash.
-    """
+
+async def create_tables():
+    """Best-effort schema bootstrap for self-managed Postgres."""
     try:
         async with engine.begin() as conn:
             from app.models import user, test, question, attempt, violation, question_bank  # noqa: F401
             await conn.run_sync(Base.metadata.create_all)
+        await ensure_admin_user()
     except Exception as e:
         print(f"Startup table check warning: {e}")
