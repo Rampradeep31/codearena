@@ -122,9 +122,10 @@ async def test_dashboard_lifecycle_manual_submit(client):
     assert bucket == "completed"
     assert entry["attempt_status"] == "submitted"
 
-    # Finished attempt cannot be re-opened or re-finished.
+    # Finished attempt returns 200 OK with completion status (no 400 error).
     res = await client.get(f"/student/attempts/{attempt_id}/questions", headers=headers)
-    assert res.status_code == 400
+    assert res.status_code == 200
+    assert res.json().get("submitted") is True
     res = await client.post(f"/student/attempts/{attempt_id}/finish", headers=headers, json={"status": "submitted"})
     assert res.status_code == 400
 
@@ -162,9 +163,10 @@ async def test_expiry_auto_submits_on_read(client):
     entry, _ = _pick(res.json(), tid)
     assert entry["attempt_status"] == "auto_submitted"
 
-    # Questions and code writes are blocked after expiry.
+    # Expired attempt returns 200 OK with status: auto_submitted (no HTTP 400).
     res = await client.get(f"/student/attempts/{attempt_id}/questions", headers=headers)
-    assert res.status_code == 400
+    assert res.status_code == 200
+    assert res.json().get("submitted") is True
     res = await client.put(
         f"/student/attempts/{attempt_id}/code",
         headers=headers,

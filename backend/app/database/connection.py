@@ -8,8 +8,12 @@ from app.config import settings
 # overrides DATABASE_URL with a throwaway SQLite file purely as test
 # infrastructure; the production code paths below contain no SQLite logic.
 db_url = settings.DATABASE_URL.strip()
+if db_url.startswith("postgresql://"):
+    db_url = "postgresql+asyncpg://" + db_url[len("postgresql://"):]
+elif db_url.startswith("postgres://"):
+    db_url = "postgresql+asyncpg://" + db_url[len("postgres://"):]
 
-if db_url.startswith("postgresql"):
+if db_url.startswith("postgresql+asyncpg"):
     engine = create_async_engine(
         db_url,
         pool_size=20,

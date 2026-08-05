@@ -4,9 +4,8 @@ import secrets
 
 
 class Settings(BaseSettings):
-    # Database — Supabase is the ONLY database. DATABASE_URL must be a
-    # Postgres connection string (the Supabase pooler or direct URL).
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/codearena"
+    # Database — Supabase is the ONLY database. DATABASE_URL must be a Postgres connection string.
+    DATABASE_URL: str = "postgresql://postgres:RagavDeepika1430@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
 
     # JWT — if no secret is provided, a random one is generated at startup.
     # Set JWT_SECRET in production so tokens survive restarts.
