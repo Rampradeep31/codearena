@@ -5,7 +5,7 @@ import secrets
 
 class Settings(BaseSettings):
     # Database — Supabase is the ONLY database. DATABASE_URL must be a Postgres connection string.
-    DATABASE_URL: str = "postgresql://postgres:RagavDeepika1430@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
+    DATABASE_URL: str = "postgresql://postgres:RagavRevanya@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
 
     # JWT — if no secret is provided, a random one is generated at startup.
     # Set JWT_SECRET in production so tokens survive restarts.
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-PROD_POSTGRES_URL = "postgresql://postgres:RagavDeepika1430@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
+PROD_POSTGRES_URL = "postgresql://postgres:RagavRevanya@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
 
 # If environment variable contains a stale SQLite URL in production, sanitize to PostgreSQL
 if settings.DATABASE_URL.startswith("sqlite") and settings.JUDGE_ENGINE != "local":

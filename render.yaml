@@ -35,7 +35,7 @@ services:
         # Set once, keep forever: openssl rand -hex 32
         sync: false
       - key: DATABASE_URL
-        value: "postgresql://postgres:RagavDeepika1430@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
+        value: "postgresql://postgres:RagavRevanya@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
       - key: CODE_TIMEOUT_SECONDS
         value: "15"
       - key: TIMEOUT_PYTHON

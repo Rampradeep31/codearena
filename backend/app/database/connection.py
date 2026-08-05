@@ -10,7 +10,7 @@ from app.config import settings
 db_url = settings.DATABASE_URL.strip()
 
 if db_url.startswith("sqlite") and settings.JUDGE_ENGINE != "local":
-    db_url = "postgresql://postgres:RagavDeepika1430@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
+    db_url = "postgresql://postgres:RagavRevanya@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
 
 if db_url.startswith("postgresql://"):
     db_url = "postgresql+asyncpg://" + db_url[len("postgresql://"):]
