@@ -26,22 +26,8 @@ logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: create tables on startup, log compiler status."""
+    """Application lifespan: best-effort schema bootstrap on startup."""
     await create_tables()
-    # Log compiler availability so Render deployment logs clearly show whether
-    # Python/Java/GCC/G++ are present inside the container.
-    try:
-        from app.services.local_executor import LocalCodeExecutor
-        diag = LocalCodeExecutor.get_diagnostics()
-        compilers = diag.get("compilers", {})
-        startup_logger = logging.getLogger("startup")
-        for name, info in compilers.items():
-            status = "OK" if info.get("available") else "MISSING"
-            version = info.get("version", "unknown")
-            path = info.get("path", "N/A")
-            startup_logger.info(f"Compiler {name}: {status} | {version} | {path}")
-    except Exception as e:
-        logging.getLogger("startup").warning(f"Compiler diagnostic failed: {e}")
     yield
 
 
@@ -69,8 +55,8 @@ if "http://localhost:5173" not in origins:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins if origins else ["*"],
-    allow_origin_regex=r"https://.*\.(vercel\.app|onrender\.com)",
+    # Explicit allow-list only: no wildcard regex, no credentials-to-anyone.
+    allow_origins=origins if origins else ["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,15 +67,10 @@ app.add_middleware(
 async def global_exception_handler(request: Request, exc: Exception):
     tb = traceback.format_exc()
     logger.error(f"[GLOBAL EXCEPTION] {request.method} {request.url}: {exc}\n{tb}")
+    # Never leak internal error details to clients.
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal server error: {str(exc)}"},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        }
+        content={"detail": "Internal server error"},
     )
 
 # Include routers
@@ -108,9 +89,3 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
-
-@app.get("/compiler/status")
-async def compiler_status():
-    """Diagnostics endpoint for local compiler environment."""
-    from app.services.local_executor import LocalCodeExecutor
-    return LocalCodeExecutor.get_diagnostics()

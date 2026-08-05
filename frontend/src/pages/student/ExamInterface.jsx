@@ -133,6 +133,10 @@ export default function ExamInterface() {
 
       const questionsRes = await studentAPI.getAttemptQuestions(attemptId);
       const qs = questionsRes?.data;
+      if (qs?.submitted || qs?.expired || qs?.status === 'submitted' || qs?.status === 'auto_submitted') {
+        navigate(`/student/exam/${attemptId}/complete`, { replace: true });
+        return;
+      }
       if (!qs || !Array.isArray(qs) || qs.length === 0) {
         setLoadError('No questions were assigned for this attempt. Please contact your instructor.');
         setLoading(false);

@@ -82,6 +82,7 @@ class QuestionBankOut(BaseModel):
     description: Optional[str] = None
     year: str
     status: str
+    question_count: int = 0
     created_at: Optional[datetime] = None
 
     class Config:
@@ -335,12 +336,9 @@ class CodeSaveRequest(BaseModel):
 
 
 class FinishAttemptRequest(BaseModel):
-    # NOTE: clients are NOT allowed to pass status='auto_submitted'.
-    # The backend determines the correct final status exclusively from
-    # server-side expiry time. Any value sent here is ignored — the endpoint
-    # always computes the status itself. This field is kept for backwards
-    # compatibility only and will be removed in a future version.
-    status: str = "submitted"
+    # Empty by design: the backend alone decides submitted vs auto_submitted
+    # from the server-side timer. Clients never send a status.
+    pass
 
 
 class TestCaseResult(BaseModel):
@@ -424,7 +422,7 @@ class SubmissionOut(BaseModel):
     attempt_id: int
     question_id: int
     language: str
-    submitted_at: datetime
+    created_at: datetime
     score: float
     total_test_cases: int
     passed_test_cases: int

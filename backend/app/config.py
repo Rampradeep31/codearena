@@ -4,19 +4,23 @@ import secrets
 
 
 class Settings(BaseSettings):
-    # Database
-    DATABASE_URL: str = "sqlite+aiosqlite:///./codearena.db"
+    # Database — Supabase is the ONLY database. DATABASE_URL must be a
+    # Postgres connection string (the Supabase pooler or direct URL).
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/codearena"
 
     # JWT — if no secret is provided, a random one is generated at startup.
     # Set JWT_SECRET in production so tokens survive restarts.
     JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRY_MINUTES: int = 480  # 8 hours
-    # Judge0 Code Execution
-    JUDGE0_API_URL: str = "https://judge0-ce.p.rapidapi.com"
-    JUDGE0_API_KEY: str = ""
-    JUDGE0_MAX_CONCURRENT: int = 10
-    # Code Execution Timeouts & Limits
+
+    # ── Code Judge ─────────────────────────────────────────────────────────
+    # JUDGE_ENGINE=docker runs every submission in an isolated container
+    # (the only supported production mode). JUDGE_ENGINE=local uses the
+    # in-process executor and is reserved for the development/test suite.
+    JUDGE_ENGINE: str = "docker"
+
+    # Timeouts & Limits (applied inside the judge container / local executor)
     CODE_TIMEOUT_SECONDS: float = 15.0
     TIMEOUT_PYTHON: float = 15.0
     TIMEOUT_C: float = 15.0
@@ -24,21 +28,13 @@ class Settings(BaseSettings):
     TIMEOUT_JAVA: float = 15.0
     CODE_MEMORY_LIMIT_KB: int = 262144  # 256MB
     MAX_CONCURRENT_EXECUTIONS: int = 20  # Semaphore limit for execution governor
-    MAX_PROCESSES_PER_SUBMISSION: int = 64  # RLIMIT_NPROC
+    MAX_PROCESSES_PER_SUBMISSION: int = 64  # RLIMIT_NPROC (local engine only)
 
-    # Gemini API Key for execution
-    GEMINI_API_KEY: str = ""
-
-    # Supabase (used to mirror attempts/test-cases created through the
-    # frontend's Supabase-backed flows). Leave empty to rely only on the
-    # local database.
-    SUPABASE_URL: str = ""
-    SUPABASE_ANON_KEY: str = ""
-
-    # Local code execution engine. WARNING: running untrusted code locally is
-    # only safe in isolated environments. A security filter blocks the most
-    # dangerous APIs, but for production prefer a sandboxed judge (e.g. Judge0).
-    ALLOW_LOCAL_EXECUTION: bool = True
+    # Judge container images per language (Docker engine only)
+    JUDGE_IMAGE_PYTHON: str = "python:3.11-slim"
+    JUDGE_IMAGE_JAVA: str = "eclipse-temurin:17-jdk-alpine"
+    JUDGE_IMAGE_C: str = "gcc:13"
+    JUDGE_IMAGE_CPP: str = "gcc:13"
 
     # App Config
     MAX_VIOLATIONS_DEFAULT: int = 3

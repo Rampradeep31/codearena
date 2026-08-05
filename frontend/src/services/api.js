@@ -7,6 +7,9 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   (import.meta.env.PROD ? 'https://codearena-api.onrender.com' : '/api');
 
+// The FastAPI backend is the only data source. It reads/writes Supabase.
+// There is no direct frontend-to-Supabase access.
+
 const backendApi = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
@@ -63,17 +66,8 @@ backendApi.interceptors.response.use(
 
 // â”€â”€â”€ Auth API (Student Entry & Registration) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export const authAPI = {
+  // Both admin and students authenticate against the FastAPI backend only.
   login: async (email, password) => {
-    // Admin shortcut: the admin account uses a fixed in-memory token that the
-    // backend recognises. This avoids needing an admin entry in the users table
-    // for local development while still routing through backendApi.
-    if (email === 'admin@codearena.com' && password === 'admin123') {
-      const adminUser = { id: 1, name: 'Admin', email: 'admin@codearena.com', role: 'admin' };
-      return { data: { access_token: 'admin_token', role: 'admin', user: adminUser } };
-    }
-
-    // Students authenticate ONLY against the FastAPI backend, which is the
-    // single source of truth for users, attempts and exam state.
     const res = await backendApi.post('/auth/login', { email, password });
     if (res.data && res.data.user) return res;
     throw new Error('Invalid credentials');
@@ -81,8 +75,7 @@ export const authAPI = {
 
   studentEntry: async (studentData) => {
     // Registration is backend-only. A real error (duplicate register number,
-    // invalid year, backend down) is surfaced to the student instead of being
-    // silently papered over with a local fake account.
+    // invalid year, backend down) is surfaced to the student.
     const res = await backendApi.post('/auth/student-entry', studentData);
     if (res.data && res.data.user) return res;
     throw new Error('Registration failed');
@@ -167,10 +160,8 @@ export const codeAPI = {
 
 export const adminAPI = {
   // ─── Dashboard ─────────────────────────────────────────────
-  // All data now comes exclusively from FastAPI (SQLite), which is the single
-  // source of truth for attempts, submissions, and exam state. The old split
-  // (FastAPI for writes, Supabase for reads) caused the admin to see phantom
-  // attempts that did not match what students actually submitted.
+  // All data comes exclusively from FastAPI (Supabase), the single source of
+  // truth for attempts, submissions, and exam state.
   getDashboard: async () => {
     const res = await backendApi.get('/admin/dashboard');
     const d = res.data;
@@ -383,9 +374,6 @@ export const adminAPI = {
   },
 
   // ─── Live Monitoring ────────────────────────────────────────
-  // Uses FastAPI backend which reads from SQLite — the same DB that records
-  // student attempts. This fixes the split where monitor showed Supabase rows
-  // but students wrote to SQLite.
   monitorTest: async (testId) => {
     const res = await backendApi.get(`/admin/tests/${testId}/monitor`);
     return res;

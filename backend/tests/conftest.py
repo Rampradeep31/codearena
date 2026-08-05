@@ -11,9 +11,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 _TMP_DIR = tempfile.mkdtemp(prefix="codearena_tests_")
+# Test infrastructure only: a throwaway SQLite file. Production code has no
+# SQLite logic — see backend/app/database/connection.py.
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{os.path.join(_TMP_DIR, 'test.db')}"
 os.environ["JWT_SECRET"] = "integration-test-secret"
-os.environ["ALLOW_LOCAL_EXECUTION"] = "true"
+# The test suite uses the in-process judge engine (no Docker dependency).
+os.environ["JUDGE_ENGINE"] = "local"
 
 from app.database.connection import Base, AsyncSessionLocal, engine  # noqa: E402
 from app.models import user, test, question, attempt, violation, question_bank  # noqa: E402,F401

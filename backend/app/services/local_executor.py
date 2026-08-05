@@ -445,10 +445,13 @@ class LocalCodeExecutor:
                 language=norm_lang,
             ), norm_lang)
 
-        if not getattr(settings, "ALLOW_LOCAL_EXECUTION", True):
+        # The in-process executor is the development/test engine only. In
+        # production the judge runs in Docker; this guard refuses to execute
+        # code locally unless JUDGE_ENGINE explicitly says "local".
+        if getattr(settings, "JUDGE_ENGINE", "docker") != "local":
             return cls._finalize(cls._evaluate_result(
                 stdout="",
-                stderr="Code execution is disabled on this server",
+                stderr="Local code execution is disabled (JUDGE_ENGINE != local)",
                 compile_output="",
                 exit_code=1,
                 exec_time=0.0,

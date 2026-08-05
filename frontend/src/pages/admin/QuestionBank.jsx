@@ -61,20 +61,18 @@ export default function QuestionBank() {
   const loadBanks = async () => {
     setLoadingBanks(true);
     try {
+      // Question counts come from the backend aggregate (Supabase), never from
+      // fetching the full question list in the browser.
       const res = await adminAPI.getQuestionBanks({
         search: search || undefined,
         year: yearFilter || undefined,
         status: statusFilter || undefined
       });
 
-      // Get question counts for each bank
-      const qRes = await adminAPI.getQuestions();
-      const allQs = qRes.data || [];
-
-      let list = (res.data || []).map(b => {
-        const count = allQs.filter(q => q.question_bank_id === b.id).length;
-        return { ...b, question_count: count };
-      });
+      let list = (res.data || []).map(b => ({
+        ...b,
+        question_count: b.question_count || 0,
+      }));
 
       // Sorting
       if (sortBy === 'newest') {

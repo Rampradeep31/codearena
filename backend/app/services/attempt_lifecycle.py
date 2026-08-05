@@ -66,8 +66,6 @@ def submission_reason_for_status(status) -> str:
     s = _status_value(status)
     if s == AttemptStatus.AUTO_SUBMITTED.value:
         return "time_expired"
-    if s == AttemptStatus.EXPIRED.value:
-        return "time_expired"
     if s == AttemptStatus.SUBMITTED.value:
         return "manual"
     return None

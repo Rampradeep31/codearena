@@ -4,6 +4,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.exc import IntegrityError
@@ -14,7 +15,7 @@ from app.models.test import Test, TestQuestion
 from app.models.question import Question, TestCase
 from app.models.attempt import (
     StudentAttempt, StudentQuestion, StudentCode, Submission,
-    AttemptStatus, SubmissionReason,
+    StudentQuestionAssignment, AttemptStatus, SubmissionReason,
 )
 from app.models.violation import Violation
 from app.schemas.schemas import (
@@ -32,9 +33,6 @@ logger = logging.getLogger("student_api")
 COMPLETED_STATUSES = frozenset({
     AttemptStatus.SUBMITTED.value,
     AttemptStatus.AUTO_SUBMITTED.value,
-    AttemptStatus.EXPIRED.value,
-    "completed",
-    "expired",
 })
 
 
@@ -42,10 +40,20 @@ def _status_value(value) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
-def _log_attempt(action: str, *, student_id: int, test_id: int = None, attempt_id: int = None, reason: str = "", exc: Exception = None):
+def _log_attempt(
+    action: str,
+    *,
+    student_id: int,
+    test_id: int = None,
+    attempt_id: int = None,
+    question_id: int = None,
+    reason: str = "",
+    exc: Exception = None,
+):
     msg = (
-        f"[ATTEMPT] action={action} student_id={student_id} test_id={test_id} "
-        f"attempt_id={attempt_id} reason={reason} ts={datetime.now(timezone.utc).isoformat()}"
+        f"[ATTEMPT] action='{action}' student_id={student_id} test_id={test_id} "
+        f"attempt_id={attempt_id} question_id={question_id} reason='{reason}' "
+        f"ts={datetime.now(timezone.utc).isoformat()}"
     )
     if exc:
         logger.error(f"{msg}\n{traceback.format_exc()}")
@@ -243,6 +251,8 @@ async def start_test(
     user: User = Depends(require_student),
 ):
     """Start a test. Creates attempt with random question assignment. Idempotent."""
+    u_id = user.id
+    _log_attempt("Start Test", student_id=u_id, test_id=test_id)
     now = datetime.now(timezone.utc)
 
     # Get test
@@ -251,89 +261,164 @@ async def start_test(
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
 
+    # Extract test properties to local variables BEFORE any DB operations/rollbacks
+    duration_mins = test.duration_minutes
+    test_end_time = test.end_time
+    test_start_time = test.start_time
+    easy_cnt = test.easy_count
+    med_cnt = test.medium_count
+    hard_cnt = test.hard_count
+    q_per_student = test.questions_per_student
+
     # Validate test is active
-    if ensure_aware(test.start_time) > now:
+    if ensure_aware(test_start_time) > now:
         raise HTTPException(status_code=400, detail="Test has not started yet")
-    if ensure_aware(test.end_time) < now:
+    if ensure_aware(test_end_time) < now:
         raise HTTPException(status_code=400, detail="Test has already ended")
 
     # Check for existing attempt (idempotent)
     existing = await db.execute(
         select(StudentAttempt).where(
-            StudentAttempt.user_id == user.id,
+            StudentAttempt.user_id == u_id,
             StudentAttempt.test_id == test_id,
         )
     )
     attempt = existing.scalar_one_or_none()
 
     if attempt:
+        _log_attempt("Existing Attempt", student_id=u_id, test_id=test_id, attempt_id=attempt.id, reason="existing_attempt_found")
         if _is_completed_status(attempt.status):
             raise HTTPException(
                 status_code=400,
                 detail="Test has already been submitted and cannot be restarted",
             )
-        _log_attempt("attempt_resume", student_id=user.id, test_id=test_id, attempt_id=attempt.id, reason="existing_in_progress")
+        # Ensure student_questions assignment exists for this attempt
+        sq_check = await db.execute(
+            select(StudentQuestion).where(StudentQuestion.attempt_id == attempt.id)
+        )
+        if not sq_check.scalars().all():
+            assign_res = await db.execute(
+                select(StudentQuestionAssignment).where(
+                    StudentQuestionAssignment.student_id == u_id,
+                    StudentQuestionAssignment.test_id == test_id,
+                )
+            )
+            asgn = assign_res.scalar_one_or_none()
+            if asgn:
+                sq = StudentQuestion(attempt_id=attempt.id, question_id=asgn.question_id, position=1)
+                code = StudentCode(attempt_id=attempt.id, question_id=asgn.question_id, language="python", source_code="")
+                db.add(sq)
+                db.add(code)
+                try:
+                    await db.commit()
+                    _log_attempt("Commit", student_id=u_id, test_id=test_id, attempt_id=attempt.id, reason="recovered_student_questions")
+                except Exception as exc:
+                    await db.rollback()
+                    _log_attempt("Rollback", student_id=u_id, test_id=test_id, exc=exc)
         return await _attempt_out(db, attempt)
 
-    # Get question pool grouped by difficulty
-    pool_result = await db.execute(
-        select(Question)
-        .join(TestQuestion, TestQuestion.question_id == Question.id)
-        .where(TestQuestion.test_id == test_id)
-    )
-    pool = pool_result.scalars().all()
-
-    easy = [q for q in pool if (q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty) == "easy"]
-    medium = [q for q in pool if (q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty) == "medium"]
-    hard = [q for q in pool if (q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty) == "hard"]
-
-    # Select questions per difficulty distribution
-    selected = []
-
-    if test.easy_count > 0:
-        if len(easy) < test.easy_count:
-            raise HTTPException(status_code=400, detail=f"Not enough easy questions in pool ({len(easy)} < {test.easy_count})")
-        selected.extend(random.sample(easy, test.easy_count))
-
-    if test.medium_count > 0:
-        if len(medium) < test.medium_count:
-            raise HTTPException(status_code=400, detail=f"Not enough medium questions in pool ({len(medium)} < {test.medium_count})")
-        selected.extend(random.sample(medium, test.medium_count))
-
-    if test.hard_count > 0:
-        if len(hard) < test.hard_count:
-            raise HTTPException(status_code=400, detail=f"Not enough hard questions in pool ({len(hard)} < {test.hard_count})")
-        selected.extend(random.sample(hard, test.hard_count))
-
-    if len(selected) > test.questions_per_student:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Difficulty counts ({test.easy_count}+{test.medium_count}+{test.hard_count}) exceed questions per student ({test.questions_per_student})",
+    # Check for existing question assignment
+    assign_result = await db.execute(
+        select(StudentQuestionAssignment).where(
+            StudentQuestionAssignment.student_id == u_id,
+            StudentQuestionAssignment.test_id == test_id,
         )
+    )
+    assignment = assign_result.scalar_one_or_none()
 
-    # If difficulty counts don't add up to questions_per_student, fill randomly
-    if len(selected) < test.questions_per_student:
-        remaining_pool = [q for q in pool if q not in selected]
-        needed = test.questions_per_student - len(selected)
-        if len(remaining_pool) < needed:
+    if assignment is not None:
+        _log_attempt("Existing Assignment", student_id=u_id, test_id=test_id, question_id=assignment.question_id)
+        assigned_q = (await db.execute(
+            select(Question).where(Question.id == assignment.question_id)
+        )).scalar_one_or_none()
+        if not assigned_q:
+            raise HTTPException(status_code=400, detail="Assigned question no longer exists")
+        selected = [assigned_q]
+        _log_attempt("Question Reused", student_id=u_id, test_id=test_id, question_id=assignment.question_id)
+    else:
+        # Get question pool grouped by difficulty
+        pool_result = await db.execute(
+            select(Question)
+            .join(TestQuestion, TestQuestion.question_id == Question.id)
+            .where(TestQuestion.test_id == test_id)
+        )
+        pool = pool_result.scalars().all()
+        if not pool:
+            raise HTTPException(status_code=400, detail="No questions available in the test pool")
+
+        easy = [q for q in pool if (q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty) == "easy"]
+        medium = [q for q in pool if (q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty) == "medium"]
+        hard = [q for q in pool if (q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty) == "hard"]
+
+        selected = []
+        if easy_cnt > 0:
+            if len(easy) < easy_cnt:
+                raise HTTPException(status_code=400, detail=f"Not enough easy questions in pool ({len(easy)} < {easy_cnt})")
+            selected.extend(random.sample(easy, easy_cnt))
+
+        if med_cnt > 0:
+            if len(medium) < med_cnt:
+                raise HTTPException(status_code=400, detail=f"Not enough medium questions in pool ({len(medium)} < {med_cnt})")
+            selected.extend(random.sample(medium, med_cnt))
+
+        if hard_cnt > 0:
+            if len(hard) < hard_cnt:
+                raise HTTPException(status_code=400, detail=f"Not enough hard questions in pool ({len(hard)} < {hard_cnt})")
+            selected.extend(random.sample(hard, hard_cnt))
+
+        if len(selected) > q_per_student:
             raise HTTPException(
                 status_code=400,
-                detail=f"Not enough questions in pool ({len(pool)} < {test.questions_per_student})",
+                detail=f"Difficulty counts ({easy_cnt}+{med_cnt}+{hard_cnt}) exceed questions per student ({q_per_student})",
             )
-        selected.extend(random.sample(remaining_pool, needed))
 
-    # Randomize order
-    random.shuffle(selected)
+        if len(selected) < q_per_student:
+            remaining_pool = [q for q in pool if q not in selected]
+            needed = q_per_student - len(selected)
+            if len(remaining_pool) < needed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Not enough questions in pool ({len(pool)} < {q_per_student})",
+                )
+            selected.extend(random.sample(remaining_pool, needed))
 
-    # Calculate expiry (minimum of duration or test end time)
+        random.shuffle(selected)
+
+        # Create StudentQuestionAssignment for the selected question
+        selected_q = selected[0]
+        assignment = StudentQuestionAssignment(
+            student_id=u_id,
+            test_id=test_id,
+            question_id=selected_q.id,
+        )
+        db.add(assignment)
+        try:
+            await db.flush()
+            _log_attempt("Question Assigned", student_id=u_id, test_id=test_id, question_id=selected_q.id)
+        except IntegrityError as exc:
+            await db.rollback()
+            _log_attempt("Rollback", student_id=u_id, test_id=test_id, reason="assignment_race_condition", exc=exc)
+            assign_result = await db.execute(
+                select(StudentQuestionAssignment).where(
+                    StudentQuestionAssignment.student_id == u_id,
+                    StudentQuestionAssignment.test_id == test_id,
+                )
+            )
+            assignment = assign_result.scalar_one_or_none()
+            if assignment:
+                assigned_q = (await db.execute(
+                    select(Question).where(Question.id == assignment.question_id)
+                )).scalar_one_or_none()
+                selected = [assigned_q]
+                _log_attempt("Question Reused", student_id=u_id, test_id=test_id, question_id=assignment.question_id)
+
     expires_at = min(
-        now + timedelta(minutes=test.duration_minutes),
-        ensure_aware(test.end_time),
+        now + timedelta(minutes=duration_mins),
+        ensure_aware(test_end_time),
     )
 
-    # Create attempt
     attempt = StudentAttempt(
-        user_id=user.id,
+        user_id=u_id,
         test_id=test_id,
         started_at=now,
         expires_at=expires_at,
@@ -344,30 +429,19 @@ async def start_test(
     db.add(attempt)
     try:
         await db.flush()
-        # Commit eagerly so concurrent requests that hit the unique constraint
-        # can reliably re-read the winning attempt below (the dependency would
-        # otherwise commit only at request teardown).
-        await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        existing = await db.execute(
+        _log_attempt("Rollback", student_id=u_id, test_id=test_id, reason="attempt_race_condition", exc=exc)
+        existing_attempt = (await db.execute(
             select(StudentAttempt).where(
-                StudentAttempt.user_id == user.id,
+                StudentAttempt.user_id == u_id,
                 StudentAttempt.test_id == test_id,
             )
-        )
-        attempt = existing.scalar_one_or_none()
-        if attempt is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Could not start the test; please try again",
-            )
-        _log_attempt("attempt_create", student_id=user.id, test_id=test_id, attempt_id=attempt.id, reason="concurrent_start_reused")
-        return await _attempt_out(db, attempt)
-    await db.refresh(attempt)
-    _log_attempt("attempt_create", student_id=user.id, test_id=test_id, attempt_id=attempt.id, reason="new_attempt")
+        )).scalar_one_or_none()
+        if existing_attempt:
+            _log_attempt("Existing Attempt", student_id=u_id, test_id=test_id, attempt_id=existing_attempt.id, reason="reused_concurrent_attempt")
+            return await _attempt_out(db, existing_attempt)
 
-    # Create student questions
     for pos, question in enumerate(selected, 1):
         sq = StudentQuestion(
             attempt_id=attempt.id,
@@ -376,7 +450,6 @@ async def start_test(
         )
         db.add(sq)
 
-        # Create empty code entry
         code = StudentCode(
             attempt_id=attempt.id,
             question_id=question.id,
@@ -385,7 +458,20 @@ async def start_test(
         )
         db.add(code)
 
-    await db.flush()
+    try:
+        await db.commit()
+        _log_attempt("Commit", student_id=u_id, test_id=test_id, attempt_id=attempt.id)
+    except IntegrityError as exc:
+        await db.rollback()
+        _log_attempt("Rollback", student_id=u_id, test_id=test_id, reason="commit_race_condition", exc=exc)
+        existing_attempt = (await db.execute(
+            select(StudentAttempt).where(
+                StudentAttempt.user_id == u_id,
+                StudentAttempt.test_id == test_id,
+            )
+        )).scalar_one_or_none()
+        if existing_attempt:
+            return await _attempt_out(db, existing_attempt)
 
     return await _attempt_out(db, attempt)
 
@@ -407,9 +493,9 @@ async def get_attempt(
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    # Expiry is enforced server-side on every read: a timed-out attempt is
-    # transitioned to auto_submitted here, so a refresh can never resurrect it.
-    await auto_submit_expired(db, attempt)
+    was_auto_submitted = await auto_submit_expired(db, attempt)
+    if was_auto_submitted:
+        _log_attempt("Auto Submit", student_id=user.id, test_id=attempt.test_id, attempt_id=attempt.id, reason="timer_expired_on_attempt_read")
 
     return await _attempt_out(db, attempt)
 
@@ -432,22 +518,31 @@ async def get_attempt_questions(
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    # Server-side expiry check runs FIRST: a timed-out attempt is auto-submitted
-    # here and reported as submitted, so the exam page routes to the results
-    # screen instead of pretending the timer still runs.
-    if await auto_submit_expired(db, attempt):
-        raise HTTPException(
-            status_code=400,
-            detail="Attempt expired and has been auto-submitted",
+    # Server-side expiry check: auto-submits expired attempt and returns JSON 200 (never HTTP 400)
+    was_auto_submitted = await auto_submit_expired(db, attempt)
+    if was_auto_submitted:
+        _log_attempt("Auto Submit", student_id=user.id, test_id=attempt.test_id, attempt_id=attempt.id, reason="timer_expired_on_questions_read")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "auto_submitted",
+                "submitted": True,
+                "expired": True,
+                "attempt_id": attempt.id,
+            }
         )
 
-    if _status_value(attempt.status) in (
-        AttemptStatus.SUBMITTED.value,
-        AttemptStatus.AUTO_SUBMITTED.value,
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Attempt has already been submitted and can no longer be viewed"
+    current_status = _status_value(attempt.status)
+    if current_status in (AttemptStatus.SUBMITTED.value, AttemptStatus.AUTO_SUBMITTED.value):
+        _log_attempt("Auto Submit", student_id=user.id, test_id=attempt.test_id, attempt_id=attempt.id, reason="already_submitted_questions_read")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": current_status,
+                "submitted": True,
+                "expired": current_status == AttemptStatus.AUTO_SUBMITTED.value,
+                "attempt_id": attempt.id,
+            }
         )
 
     # Get assigned questions
@@ -489,7 +584,7 @@ async def get_attempt_questions(
             select(Submission).where(
                 Submission.attempt_id == attempt_id,
                 Submission.question_id == q.id,
-            ).order_by(Submission.submitted_at.desc()).limit(1)
+            ).order_by(Submission.created_at.desc()).limit(1)
         )
         submission = sub_result.scalar_one_or_none()
 

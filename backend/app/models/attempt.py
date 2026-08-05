@@ -6,21 +6,25 @@ from app.database.connection import Base
 
 
 class AttemptStatus(str, enum.Enum):
+    """Canonical attempt lifecycle. Only these four values are ever persisted.
+
+    NOT_STARTED is the implicit state before a test_attempts row exists
+    (login / dashboard / refresh never create a row). A row is created only
+    by Start Test (IN_PROGRESS), then moved to SUBMITTED (manual finish) or
+    AUTO_SUBMITTED (server-side timer expiry).
+    """
+    NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
     SUBMITTED = "submitted"
     AUTO_SUBMITTED = "auto_submitted"
-    EXPIRED = "expired"
 
 
 class SubmissionReason(str, enum.Enum):
     MANUAL = "manual"
     TIME_EXPIRED = "time_expired"
-    VIOLATION_LIMIT = "violation_limit"
 
 
 class StudentAttempt(Base):
-    """Maps to Supabase public.test_attempts (single source of truth)."""
-
     __tablename__ = "test_attempts"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -43,28 +47,33 @@ class StudentAttempt(Base):
         UniqueConstraint("user_id", "test_id", name="uq_user_test"),
     )
 
-    # ── Compatibility shims (instance-level reads only) ──────────────
-    # These exist so legacy call sites like attempt.student_id / attempt.total_score
-    # keep working after the student_id→user_id and total_score→score renames.
-    # They are plain Python properties, NOT mapped columns: in SQLAlchemy WHERE
-    # filters you MUST use StudentAttempt.user_id / StudentAttempt.score.
-    # Using StudentAttempt.student_id in a .where() silently yields WHERE false
-    # (a property object never equals an int), hiding all rows.
-    @property
-    def student_id(self) -> int:
-        return self.user_id
 
-    @student_id.setter
-    def student_id(self, value: int) -> None:
-        self.user_id = value
+class StudentQuestionAssignment(Base):
+    """Stable per-student question assignment for a test.
 
-    @property
-    def total_score(self) -> float:
-        return float(self.score or 0)
+    Created exactly once when the student first starts the test and never
+    changed afterwards, so a refresh always returns the same question. The
+    UNIQUE(student_id, test_id) constraint guarantees a single assignment.
+    """
+    __tablename__ = "student_question_assignments"
 
-    @total_score.setter
-    def total_score(self, value) -> None:
-        self.score = int(value or 0)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    test_id: Mapped[int] = mapped_column(
+        ForeignKey("tests.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
+    )
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "test_id", name="uq_student_test_assignment"),
+    )
 
 
 class StudentQuestion(Base):
@@ -86,7 +95,7 @@ class StudentQuestion(Base):
 
 
 class StudentCode(Base):
-    """Auto-saved student code for each question in an attempt."""
+    """Auto-saved student code draft for each question in an attempt."""
     __tablename__ = "student_code"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -108,7 +117,7 @@ class StudentCode(Base):
 
 
 class Submission(Base):
-    """Final code submission for a question (Supabase public.submissions)."""
+    """Final graded code submission for a question."""
     __tablename__ = "submissions"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -119,9 +128,9 @@ class Submission(Base):
         ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
     )
     language: Mapped[str] = mapped_column(String(20), nullable=False, default="python")
-    source_code: Mapped[str] = mapped_column("code", Text, nullable=False, default="")
-    submitted_at: Mapped[datetime] = mapped_column(
-        "created_at", DateTime(timezone=True), server_default=func.now()
+    code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
     status: Mapped[str] = mapped_column(String(50), nullable=True, default="submitted")
     score: Mapped[float] = mapped_column(Float, nullable=True, default=0)

@@ -111,7 +111,7 @@ async def get_dashboard_stats(
         select(StudentAttempt).order_by(StudentAttempt.started_at.desc())
     )).scalars().all()
     submissions = (await db.execute(
-        select(Submission).order_by(Submission.submitted_at.desc())
+        select(Submission).order_by(Submission.created_at.desc())
     )).scalars().all()
     banks = (await db.execute(
         select(QuestionBank).order_by(QuestionBank.created_at.desc())
@@ -560,9 +560,25 @@ async def list_question_banks(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """List all question banks."""
+    """List all question banks with their live question counts."""
     result = await db.execute(select(QuestionBank).order_by(QuestionBank.created_at.desc()))
-    return result.scalars().all()
+    banks = result.scalars().all()
+
+    # One aggregate query for every bank's question count (no N+1).
+    count_result = await db.execute(
+        select(Question.question_bank_id, func.count(Question.id))
+        .where(Question.question_bank_id.isnot(None))
+        .group_by(Question.question_bank_id)
+    )
+    counts = dict(count_result.all())
+
+    return [
+        QuestionBankOut(
+            id=b.id, title=b.title, description=b.description, year=b.year,
+            status=b.status, question_count=counts.get(b.id, 0), created_at=b.created_at,
+        )
+        for b in banks
+    ]
 
 
 @router.post("/question-banks", response_model=QuestionBankOut, status_code=201)
@@ -590,12 +606,18 @@ async def get_question_bank(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Get a single question bank."""
+    """Get a single question bank with its live question count."""
     result = await db.execute(select(QuestionBank).where(QuestionBank.id == bank_id))
     bank = result.scalar_one_or_none()
     if not bank:
         raise HTTPException(status_code=404, detail="Question bank not found")
-    return QuestionBankOut.from_orm(bank)
+    q_count = (await db.execute(
+        select(func.count(Question.id)).where(Question.question_bank_id == bank.id)
+    )).scalar() or 0
+    return QuestionBankOut(
+        id=bank.id, title=bank.title, description=bank.description, year=bank.year,
+        status=bank.status, question_count=q_count, created_at=bank.created_at,
+    )
 
 
 @router.put("/question-banks/{bank_id}", response_model=QuestionBankOut)
@@ -879,7 +901,7 @@ async def get_test_results(
     rows = []
     for attempt in attempts:
         # Get student
-        student_result = await db.execute(select(User).where(User.id == attempt.student_id))
+        student_result = await db.execute(select(User).where(User.id == attempt.user_id))
         student = student_result.scalar_one_or_none()
         if not student:
             continue
@@ -913,7 +935,7 @@ async def get_test_results(
             if s.total_test_cases and s.passed_test_cases == s.total_test_cases
         )
 
-        score = attempt.total_score or 0
+        score = attempt.score or 0
         percentage = (score / total_possible * 100) if total_possible > 0 else 0
 
         rows.append(ResultRow(
@@ -971,23 +993,3 @@ async def list_violations(
         created_at=v.created_at,
     ) for v in violations]
 
-
-@router.get("/tests/{test_id}/violations", response_model=List[ViolationOut])
-async def get_test_violations(
-    test_id: int,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    """Get all violations for a specific test."""
-    result = await db.execute(
-        select(Violation)
-        .join(StudentAttempt)
-        .where(StudentAttempt.test_id == test_id)
-        .order_by(Violation.created_at.desc())
-    )
-    violations = result.scalars().all()
-
-    return [ViolationOut(
-        id=v.id, attempt_id=v.attempt_id, violation_type=v.violation_type,
-        created_at=v.created_at,
-    ) for v in violations]

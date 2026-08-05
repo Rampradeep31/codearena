@@ -1,6 +1,6 @@
 # ==============================================================================
 # Render Infrastructure as Code (Blueprint) for CodeArena
-# Backend:  Docker Web Service (FastAPI + in-container compilers)
+# Backend:  Docker Web Service (FastAPI + Supabase, judge runs in Docker)
 # Frontend: Static Site (React SPA) with SPA rewrite via public/static.json
 # ==============================================================================
 
@@ -16,12 +16,14 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
-      - key: ALLOW_LOCAL_EXECUTION
-        value: "True"
+      # JUDGE_ENGINE=docker is the production judge (isolated containers).
+      # NOTE: the Docker judge needs a host with a Docker socket. Render's free
+      # tier cannot mount one; on Render set JUDGE_ENGINE=local as a documented
+      # dev fallback until the judge runs on Docker-enabled infrastructure.
+      - key: JUDGE_ENGINE
+        value: "docker"
       - key: JWT_ALGORITHM
         value: "HS256"
-      - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: "480"
       - key: MAX_CONCURRENT_EXECUTIONS
         value: "20"
       - key: CORS_ORIGINS
@@ -33,18 +35,7 @@ services:
         # Set once, keep forever: openssl rand -hex 32
         sync: false
       - key: DATABASE_URL
-        sync: false
-      - key: DIRECT_URL
-        sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: GOOGLE_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
+        # Supabase Postgres connection string (service role).
         sync: false
       - key: CODE_TIMEOUT_SECONDS
         value: "15"
@@ -74,10 +65,6 @@ services:
     envVars:
       - key: VITE_API_URL
         value: "https://codearena-api.onrender.com"
-      - key: VITE_SUPABASE_URL
-        sync: false
-      - key: VITE_SUPABASE_ANON_KEY
-        sync: false
     routes:
       - type: rewrite
         source: /*
