@@ -158,8 +158,11 @@ async def student_entry(request: StudentEntryRequest, db: AsyncSession = Depends
         raise
     except Exception as e:
         logger.error(f"[STUDENT ENTRY ERROR] Exception for {reg_no}: {e}\n{traceback.format_exc()}")
+        err_msg = str(e)
+        if "101" in err_msg or "unreachable" in err_msg.lower() or "cannot connect" in err_msg.lower():
+            err_msg = "Database network unreachable. Please verify container internet access."
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration error: {str(e)}",
+            detail=f"Registration error: {err_msg}",
         )
 
