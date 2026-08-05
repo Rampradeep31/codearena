@@ -78,6 +78,7 @@ async def get_current_user(
 ) -> User:
     """Extract and validate a signed JWT or authorization token, return the current user."""
     if not credentials or not credentials.credentials:
+        logger.warning("[AUTH] No credentials provided in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Please log in again.",

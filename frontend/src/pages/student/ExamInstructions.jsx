@@ -18,12 +18,31 @@ export default function ExamInstructions() {
     setLoadError('');
     try {
       const res = await studentAPI.getTests();
-      const all = [...(res.data.active || []), ...(res.data.upcoming || []), ...(res.data.completed || [])];
+      const allBuckets = res.data || { upcoming: [], active: [], completed: [] };
+      const all = [
+        ...(allBuckets.active || []),
+        ...(allBuckets.upcoming || []),
+        ...(allBuckets.completed || []),
+      ];
       const found = all.find(t => t.id === parseInt(testId));
       if (!found) {
         setLoadError('Test not found. Please check with your instructor.');
         return;
       }
+
+      // If this test already has a completed attempt, redirect to results.
+      const completedStatuses = ['submitted', 'auto_submitted', 'expired', 'completed'];
+      if (found.attempt_id && completedStatuses.includes(found.attempt_status)) {
+        navigate(`/student/exam/${found.attempt_id}/complete`, { replace: true });
+        return;
+      }
+
+      // If there is an in_progress attempt, go directly to the exam.
+      if (found.attempt_id && found.attempt_status === 'in_progress') {
+        navigate(`/student/exam/${found.attempt_id}`, { replace: true });
+        return;
+      }
+
       setTest(found);
     } catch {
       setLoadError('Failed to load test details. Check your connection and try again.');

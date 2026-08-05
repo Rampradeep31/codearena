@@ -335,6 +335,11 @@ class CodeSaveRequest(BaseModel):
 
 
 class FinishAttemptRequest(BaseModel):
+    # NOTE: clients are NOT allowed to pass status='auto_submitted'.
+    # The backend determines the correct final status exclusively from
+    # server-side expiry time. Any value sent here is ignored — the endpoint
+    # always computes the status itself. This field is kept for backwards
+    # compatibility only and will be removed in a future version.
     status: str = "submitted"
 
 

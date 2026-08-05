@@ -27,7 +27,11 @@ services:
       - key: CORS_ORIGINS
         value: "http://localhost:5173,https://codearena-indol.vercel.app,https://codearena-frontend.onrender.com"
       - key: JWT_SECRET
-        generateWith: 32
+        # IMPORTANT: Set this to a stable, strong secret in the Render dashboard.
+        # Using generateWith creates a new random secret on every deploy, which
+        # invalidates all active student JWT tokens and logs everyone out mid-exam.
+        # Set once, keep forever: openssl rand -hex 32
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: DIRECT_URL
@@ -42,6 +46,20 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: CODE_TIMEOUT_SECONDS
+        value: "15"
+      - key: TIMEOUT_PYTHON
+        value: "15.0"
+      - key: TIMEOUT_JAVA
+        value: "15.0"
+      - key: TIMEOUT_C
+        value: "15.0"
+      - key: TIMEOUT_CPP
+        value: "15.0"
+      - key: CODE_MEMORY_LIMIT_KB
+        value: "262144"
+      - key: SUBMISSION_GRACE_PERIOD_SECONDS
+        value: "5"
 
   # ── Frontend (Render Static Site) ──────────────────────────────────────────
   - type: web

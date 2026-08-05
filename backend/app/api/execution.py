@@ -14,6 +14,7 @@ from app.schemas.schemas import (
 from app.security.dependencies import require_student
 from app.services.execution_service import run_against_test_cases, execute_code
 from app.services.local_executor import LocalCodeExecutor
+from app.services.attempt_lifecycle import auto_submit_expired, submission_reason_for_status
 
 import logging
 
@@ -51,7 +52,7 @@ async def _get_owned_attempt(db: AsyncSession, attempt_id: int, user: User) -> S
         )
 
     # Attempt exists — verify ownership
-    if attempt.student_id != user.id:
+    if attempt.user_id != user.id:
         raise HTTPException(
             status_code=403,
             detail="Attempt does not belong to the current student",
@@ -69,6 +70,12 @@ def _require_active(attempt: StudentAttempt):
 
 
 async def _require_assigned_question(db: AsyncSession, attempt_id: int, question_id: int):
+    """Verify the question was assigned to this attempt.
+
+    A question that was never assigned must be rejected, never silently
+    auto-assigned: silently inserting a row on a grading path would let a
+    student submit code for questions that were not drawn for their attempt.
+    """
     result = await db.execute(
         select(StudentQuestion.id).where(
             StudentQuestion.attempt_id == attempt_id,
@@ -76,16 +83,10 @@ async def _require_assigned_question(db: AsyncSession, attempt_id: int, question
         )
     )
     if result.scalar_one_or_none() is None:
-        sq = StudentQuestion(
-            attempt_id=attempt_id,
-            question_id=question_id,
-            position=1
+        raise HTTPException(
+            status_code=400,
+            detail="Question is not part of this attempt",
         )
-        db.add(sq)
-        try:
-            await db.flush()
-        except Exception:
-            pass
 
 
 FALLBACK_TEST_CASES = {
@@ -229,21 +230,17 @@ async def _fetch_question(db: AsyncSession, question_id: int) -> Question:
     except Exception as e:
         logger.warning(f"Failed to query Question table for id {question_id}: {e}")
 
-    # Return virtual question fallback to prevent 404 / 500 errors when questions are loaded from Supabase/LocalStorage
-    q = Question(
+    # Return a transient virtual question fallback to prevent 404 / 500 errors
+    # when questions exist outside the local database. This is a read-only
+    # fallback: it must NEVER mutate the database from a grading endpoint.
+    return Question(
         id=question_id,
         title=f"Coding Challenge #{question_id}",
         statement="Solve the problem using standard IO.",
         difficulty="easy",
         marks=50,
-        topic="General"
+        topic="General",
     )
-    db.add(q)
-    try:
-        await db.flush()
-    except Exception:
-        await db.rollback()
-    return q
 
 
 async def _save_code(db: AsyncSession, attempt_id: int, question_id: int, language: str, source_code: str):
@@ -272,11 +269,19 @@ async def _save_code(db: AsyncSession, attempt_id: int, question_id: int, langua
 
 
 @router.post("/run-case", response_model=CodeRunResponse)
-async def run_single_case(data: CodeRunCaseRequest, user: User = Depends(require_student)):
+async def run_single_case(
+    data: CodeRunCaseRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_student),
+):
     """Run one sample or custom input locally without creating a submission."""
     logger.info(
-        f"[API /code/run-case] User ID: {user.id} ({user.name}) | Language: {data.language} | Auth Verified"
+        f"[API /code/run-case] User ID: {user.id} ({user.name}) | Attempt ID: {data.attempt_id} | Language: {data.language} | Auth Verified"
     )
+    attempt = await _get_owned_attempt(db, data.attempt_id, user)
+    _require_active(attempt)
+    if await auto_submit_expired(db, attempt):
+        raise HTTPException(status_code=400, detail="Attempt expired and has been auto-submitted")
     result = await execute_code(data.source_code, data.language, data.input, data.expected_output)
     actual_output = (result.get("output") or "").strip()
     expected = (data.expected_output or "").strip()
@@ -315,6 +320,8 @@ async def run_code(
 
     attempt = await _get_owned_attempt(db, data.attempt_id, user)
     _require_active(attempt)
+    if await auto_submit_expired(db, attempt):
+        raise HTTPException(status_code=400, detail="Attempt expired and has been auto-submitted")
     await _require_assigned_question(db, data.attempt_id, data.question_id)
 
     public_test_cases = await _fetch_test_cases(db, data.question_id, include_hidden=False)
@@ -404,6 +411,8 @@ async def submit_code(
 
     attempt = await _get_owned_attempt(db, data.attempt_id, user)
     _require_active(attempt)
+    if await auto_submit_expired(db, attempt):
+        raise HTTPException(status_code=400, detail="Attempt expired and has been auto-submitted")
     await _require_assigned_question(db, data.attempt_id, data.question_id)
 
     question = await _fetch_question(db, data.question_id)
@@ -428,6 +437,15 @@ async def submit_code(
 
     has_compilation_error = any(r["status"] in ("compilation_error", "compiler_not_installed") for r in results)
 
+    if has_compilation_error:
+        status_str = "compilation_error"
+    elif total_count > 0 and passed_count == total_count:
+        status_str = "accepted"
+    elif passed_count > 0:
+        status_str = "partial"
+    else:
+        status_str = "wrong_answer"
+
     try:
         submission = Submission(
             attempt_id=data.attempt_id,
@@ -437,6 +455,7 @@ async def submit_code(
             score=score,
             total_test_cases=total_count,
             passed_test_cases=passed_count,
+            status=status_str,
         )
         db.add(submission)
         await db.flush()
@@ -457,15 +476,6 @@ async def submit_code(
         logger.warning(f"Could not persist Submission locally for attempt {data.attempt_id}: {e}")
 
     await _save_code(db, data.attempt_id, data.question_id, data.language, data.source_code)
-
-    if has_compilation_error:
-        status_str = "compilation_error"
-    elif total_count > 0 and passed_count == total_count:
-        status_str = "accepted"
-    elif passed_count > 0:
-        status_str = "partial"
-    else:
-        status_str = "wrong_answer"
 
     max_exec_time = max((r.get("execution_time", 0.0) for r in results), default=0.0)
     max_memory_kb = max((r.get("memory_used", 0) for r in results), default=0)

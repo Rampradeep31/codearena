@@ -1,4 +1,6 @@
 import random
+import logging
+import traceback
 from datetime import datetime, timedelta, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,12 +24,37 @@ from app.schemas.schemas import (
 )
 from app.security.dependencies import require_student
 from app.utils import ensure_aware
+from app.services.attempt_lifecycle import auto_submit_expired, submission_reason_for_status
 
 router = APIRouter(prefix="/student", tags=["Student"])
+logger = logging.getLogger("student_api")
+
+COMPLETED_STATUSES = frozenset({
+    AttemptStatus.SUBMITTED.value,
+    AttemptStatus.AUTO_SUBMITTED.value,
+    AttemptStatus.EXPIRED.value,
+    "completed",
+    "expired",
+})
 
 
 def _status_value(value) -> str:
     return value.value if hasattr(value, "value") else str(value)
+
+
+def _log_attempt(action: str, *, student_id: int, test_id: int = None, attempt_id: int = None, reason: str = "", exc: Exception = None):
+    msg = (
+        f"[ATTEMPT] action={action} student_id={student_id} test_id={test_id} "
+        f"attempt_id={attempt_id} reason={reason} ts={datetime.now(timezone.utc).isoformat()}"
+    )
+    if exc:
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+    else:
+        logger.info(msg)
+
+
+def _is_completed_status(status: str) -> bool:
+    return _status_value(status).lower() in COMPLETED_STATUSES
 
 
 async def _attempt_out(db: AsyncSession, attempt: StudentAttempt) -> AttemptOut:
@@ -35,12 +62,13 @@ async def _attempt_out(db: AsyncSession, attempt: StudentAttempt) -> AttemptOut:
     test = await db.execute(select(Test).where(Test.id == attempt.test_id))
     test_row = test.scalar_one_or_none()
     return AttemptOut(
-        id=attempt.id, student_id=attempt.student_id, test_id=attempt.test_id,
+        id=attempt.id, student_id=attempt.user_id, test_id=attempt.test_id,
         started_at=attempt.started_at, expires_at=attempt.expires_at,
         submitted_at=attempt.submitted_at, status=_status_value(attempt.status),
-        violation_count=attempt.violation_count,
-        submission_reason=attempt.submission_reason,
-        total_score=attempt.total_score, total_possible=attempt.total_possible,
+        violation_count=attempt.violation_count or 0,
+        submission_reason=submission_reason_for_status(attempt.status),
+        total_score=float(attempt.score or 0),
+        total_possible=float(test_row.total_marks) if test_row and test_row.total_marks else None,
         max_violations=test_row.max_violations if test_row else 3,
     )
 
@@ -63,33 +91,86 @@ async def get_student_tests(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_student),
 ):
-    """Get tests categorized as upcoming, active, completed, scoped to the student's year."""
-    now = datetime.now(timezone.utc)
+    """Get tests categorized as upcoming, active, completed, scoped to the student's year.
 
+    Classification rules (server-authoritative):
+    - No attempt AND test window open          → active (can start)
+    - No attempt AND test window future        → upcoming
+    - No attempt AND test window past          → silently excluded
+    - Attempt exists, status in_progress       → active (resume)
+    - Attempt exists, status completed         → completed
+    Tests where the student already has an attempt are ALWAYS returned
+    regardless of year filter or test end_time, so a refresh can never
+    make a test disappear.
+    """
+    now = datetime.now(timezone.utc)
+    _log_attempt("dashboard_fetch", student_id=user.id, reason="start")
+
+    # Step 1: Collect all test_ids where this student already has an attempt.
+    # These tests must ALWAYS be returned — the student's attempt is the source
+    # of truth regardless of year filter or test schedule.
+    existing_attempts_result = await db.execute(
+        select(StudentAttempt).where(StudentAttempt.user_id == user.id)
+    )
+    existing_attempts = existing_attempts_result.scalars().all()
+    attempted_test_ids = {a.test_id for a in existing_attempts}
+    attempts_by_test = {a.test_id: a for a in existing_attempts}
+
+    # Step 2: Build the year-scoped query for NEW tests (no attempt yet).
     year_label = {2: "Second Year", 3: "Third Year"}.get(user.year)
 
-    query = select(Test).order_by(Test.start_time.desc())
+    year_query = select(Test).order_by(Test.start_time.desc())
     if year_label:
-        # Match the frontend Supabase fallback: tests with an unset year remain
-        # visible to every year instead of being silently dropped (which made
-        # ACTIVE assignments disappear from the dashboard).
-        query = query.where(or_(Test.year == year_label, Test.year.is_(None)))
-    result = await db.execute(query)
-    tests = result.scalars().all()
+        # Only apply year filter to tests the student hasn't started yet.
+        # Tests with existing attempts are fetched separately (step 3) so they
+        # are never lost due to a year mismatch.
+        year_query = year_query.where(
+            or_(Test.year == year_label, Test.year.is_(None))
+        )
+    year_result = await db.execute(year_query)
+    year_scoped_tests = year_result.scalars().all()
+
+    # Step 3: Fetch tests where student has an attempt but year filter might
+    # have excluded them (e.g. test year changed after attempt was created).
+    missed_test_ids = attempted_test_ids - {t.id for t in year_scoped_tests}
+    extra_tests = []
+    if missed_test_ids:
+        extra_result = await db.execute(
+            select(Test).where(Test.id.in_(missed_test_ids))
+        )
+        extra_tests = extra_result.scalars().all()
+
+    # Merge: de-duplicate by id, attempted tests first so they are never lost.
+    seen_ids: set = set()
+    all_tests = []
+    for t in list(extra_tests) + list(year_scoped_tests):
+        if t.id not in seen_ids:
+            seen_ids.add(t.id)
+            all_tests.append(t)
 
     upcoming = []
     active = []
     completed = []
 
-    for t in tests:
-        # Check if student has an attempt
-        attempt_result = await db.execute(
-            select(StudentAttempt).where(
-                StudentAttempt.student_id == user.id,
-                StudentAttempt.test_id == t.id,
+    for t in all_tests:
+        attempt = attempts_by_test.get(t.id)
+
+        # Re-fetch from DB in case the in-memory dict is stale (e.g. concurrent
+        # session started an attempt between the bulk fetch and this loop).
+        if attempt is None and t.id in attempted_test_ids:
+            att_r = await db.execute(
+                select(StudentAttempt).where(
+                    StudentAttempt.user_id == user.id,
+                    StudentAttempt.test_id == t.id,
+                )
             )
-        )
-        attempt = attempt_result.scalar_one_or_none()
+            attempt = att_r.scalar_one_or_none()
+
+        # Server-side expiry enforcement: transition in_progress → auto_submitted
+        # when the timer has passed. This runs on every dashboard read so the
+        # client never needs to guess the correct status.
+        if attempt:
+            await auto_submit_expired(db, attempt)
 
         q_count = await db.execute(
             select(func.count(TestQuestion.id)).where(TestQuestion.test_id == t.id)
@@ -111,40 +192,47 @@ async def get_student_tests(
             "question_count": q_count.scalar() or 0,
         }
 
+        attempt_status = _status_value(attempt.status) if attempt else None
+
+        # Always expose attempt fields so the client contract is stable
+        # (null when no attempt exists).
         if attempt:
             test_data["attempt_id"] = attempt.id
-            test_data["attempt_status"] = _status_value(attempt.status)
-            test_data["attempt_submitted_at"] = attempt.submitted_at.isoformat() if attempt.submitted_at else None
-
-        attempt_status = _status_value(attempt.status) if attempt else None
-        # Requirement 7: an attempt is completed when its status is a completed
-        # status OR when submitted_at is stamped (manual submit & auto-submit
-        # both set it). Existence of an attempt row alone never means completed.
-        is_submitted = (
-            attempt is not None
-            and (
-                attempt_status in (
-                    AttemptStatus.SUBMITTED.value,
-                    AttemptStatus.AUTO_SUBMITTED.value,
-                    "completed",
-                )
-                or attempt.submitted_at is not None
+            test_data["attempt_status"] = attempt_status
+            test_data["attempt_submitted_at"] = (
+                attempt.submitted_at.isoformat() if attempt.submitted_at else None
             )
-        )
+        else:
+            test_data["attempt_id"] = None
+            test_data["attempt_status"] = None
+            test_data["attempt_submitted_at"] = None
 
-        if is_submitted:
-            test_data["status"] = "completed"
+        # ── Classification: DB-only truth, never frontend state ──────────
+        #
+        # Rule 1: attempt exists + completed status  → completed
+        # Rule 2: attempt exists + any other status  → active (resume)
+        # Rule 3: no attempt + future start_time     → upcoming
+        # Rule 4: no attempt + window open now        → active (start)
+        # Rule 5: no attempt + past end_time          → skip (no action possible)
+        #
+        # Tests that fall into Rule 5 are only excluded when there is NO
+        # attempt. An attempt always anchors the test into a bucket (rules 1-2).
+        if attempt and _is_completed_status(attempt_status):
             completed.append(test_data)
+        elif attempt is not None:
+            # in_progress or any non-completed state with an existing attempt
+            active.append(test_data)
         elif ensure_aware(t.start_time) > now:
-            test_data["status"] = "upcoming"
             upcoming.append(test_data)
         elif ensure_aware(t.end_time) >= now:
-            test_data["status"] = "active"
             active.append(test_data)
-        # NOTE: no fallthrough here. An exam whose window has ended without a
-        # submission is NOT completed: the lifecycle only allows COMPLETED when
-        # the student submits or the attempt timer expires (auto-submit).
+        # else: no attempt + test ended → intentionally excluded
 
+    _log_attempt(
+        "dashboard_fetch",
+        student_id=user.id,
+        reason=f"done active={len(active)} upcoming={len(upcoming)} completed={len(completed)}",
+    )
     return {"upcoming": upcoming, "active": active, "completed": completed}
 
 
@@ -172,19 +260,19 @@ async def start_test(
     # Check for existing attempt (idempotent)
     existing = await db.execute(
         select(StudentAttempt).where(
-            StudentAttempt.student_id == user.id,
+            StudentAttempt.user_id == user.id,
             StudentAttempt.test_id == test_id,
         )
     )
     attempt = existing.scalar_one_or_none()
 
     if attempt:
-        # A submitted attempt is final: it cannot be reopened or retaken.
-        if attempt.status in (AttemptStatus.SUBMITTED, AttemptStatus.AUTO_SUBMITTED):
+        if _is_completed_status(attempt.status):
             raise HTTPException(
                 status_code=400,
                 detail="Test has already been submitted and cannot be restarted",
             )
+        _log_attempt("attempt_resume", student_id=user.id, test_id=test_id, attempt_id=attempt.id, reason="existing_in_progress")
         return await _attempt_out(db, attempt)
 
     # Get question pool grouped by difficulty
@@ -245,30 +333,39 @@ async def start_test(
 
     # Create attempt
     attempt = StudentAttempt(
-        student_id=user.id,
+        user_id=user.id,
         test_id=test_id,
         started_at=now,
         expires_at=expires_at,
-        status=AttemptStatus.IN_PROGRESS,
+        status=AttemptStatus.IN_PROGRESS.value,
         violation_count=0,
-        total_score=0,
-        total_possible=sum(q.marks for q in selected),
+        score=0,
     )
     db.add(attempt)
     try:
         await db.flush()
+        # Commit eagerly so concurrent requests that hit the unique constraint
+        # can reliably re-read the winning attempt below (the dependency would
+        # otherwise commit only at request teardown).
+        await db.commit()
     except IntegrityError:
-        # Concurrent start: another request already created the attempt
         await db.rollback()
         existing = await db.execute(
             select(StudentAttempt).where(
-                StudentAttempt.student_id == user.id,
+                StudentAttempt.user_id == user.id,
                 StudentAttempt.test_id == test_id,
             )
         )
-        attempt = existing.scalar_one()
+        attempt = existing.scalar_one_or_none()
+        if attempt is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Could not start the test; please try again",
+            )
+        _log_attempt("attempt_create", student_id=user.id, test_id=test_id, attempt_id=attempt.id, reason="concurrent_start_reused")
         return await _attempt_out(db, attempt)
     await db.refresh(attempt)
+    _log_attempt("attempt_create", student_id=user.id, test_id=test_id, attempt_id=attempt.id, reason="new_attempt")
 
     # Create student questions
     for pos, question in enumerate(selected, 1):
@@ -303,12 +400,16 @@ async def get_attempt(
     result = await db.execute(
         select(StudentAttempt).where(
             StudentAttempt.id == attempt_id,
-            StudentAttempt.student_id == user.id,
+            StudentAttempt.user_id == user.id,
         )
     )
     attempt = result.scalar_one_or_none()
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
+
+    # Expiry is enforced server-side on every read: a timed-out attempt is
+    # transitioned to auto_submitted here, so a refresh can never resurrect it.
+    await auto_submit_expired(db, attempt)
 
     return await _attempt_out(db, attempt)
 
@@ -324,22 +425,30 @@ async def get_attempt_questions(
     attempt_result = await db.execute(
         select(StudentAttempt).where(
             StudentAttempt.id == attempt_id,
-            StudentAttempt.student_id == user.id,
+            StudentAttempt.user_id == user.id,
         )
     )
     attempt = attempt_result.scalar_one_or_none()
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    if attempt.status in (AttemptStatus.SUBMITTED, AttemptStatus.AUTO_SUBMITTED):
+    # Server-side expiry check runs FIRST: a timed-out attempt is auto-submitted
+    # here and reported as submitted, so the exam page routes to the results
+    # screen instead of pretending the timer still runs.
+    if await auto_submit_expired(db, attempt):
+        raise HTTPException(
+            status_code=400,
+            detail="Attempt expired and has been auto-submitted",
+        )
+
+    if _status_value(attempt.status) in (
+        AttemptStatus.SUBMITTED.value,
+        AttemptStatus.AUTO_SUBMITTED.value,
+    ):
         raise HTTPException(
             status_code=400,
             detail="Attempt has already been submitted and can no longer be viewed"
         )
-
-    now = datetime.now(timezone.utc)
-    if now > ensure_aware(attempt.expires_at):
-        raise HTTPException(status_code=400, detail="Attempt has expired")
 
     # Get assigned questions
     sq_result = await db.execute(
@@ -421,20 +530,19 @@ async def save_code(
     attempt_result = await db.execute(
         select(StudentAttempt).where(
             StudentAttempt.id == attempt_id,
-            StudentAttempt.student_id == user.id,
+            StudentAttempt.user_id == user.id,
         )
     )
     attempt = attempt_result.scalar_one_or_none()
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    if attempt.status in ("submitted", "auto_submitted"):
+    if _status_value(attempt.status) in ("submitted", "auto_submitted"):
         raise HTTPException(status_code=400, detail="Attempt already submitted")
 
-    # Check timer
-    now = datetime.now(timezone.utc)
-    if now > ensure_aware(attempt.expires_at):
-        raise HTTPException(status_code=400, detail="Attempt has expired")
+    # Server-side expiry enforcement on write paths too.
+    if await auto_submit_expired(db, attempt):
+        raise HTTPException(status_code=400, detail="Attempt expired and has been auto-submitted")
 
     # Verify the question is assigned to this attempt
     assigned = await db.execute(
@@ -467,7 +575,23 @@ async def save_code(
         )
         db.add(code)
 
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Concurrent auto-save: the unique constraint fired.
+        # Roll back and re-read the existing row to update it.
+        await db.rollback()
+        code_result2 = await db.execute(
+            select(StudentCode).where(
+                StudentCode.attempt_id == attempt_id,
+                StudentCode.question_id == data.question_id,
+            )
+        )
+        code = code_result2.scalar_one_or_none()
+        if code:
+            code.source_code = data.source_code
+            code.language = data.language
+            await db.flush()
     return {"message": "Code saved"}
 
 
@@ -483,15 +607,19 @@ async def record_violation(
     attempt_result = await db.execute(
         select(StudentAttempt).where(
             StudentAttempt.id == attempt_id,
-            StudentAttempt.student_id == user.id,
+            StudentAttempt.user_id == user.id,
         )
     )
     attempt = attempt_result.scalar_one_or_none()
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    if attempt.status in ("submitted", "auto_submitted"):
+    if _status_value(attempt.status) in ("submitted", "auto_submitted"):
         raise HTTPException(status_code=400, detail="Attempt already submitted")
+
+    # Server-side expiry enforcement.
+    if await auto_submit_expired(db, attempt):
+        raise HTTPException(status_code=400, detail="Attempt expired and has been auto-submitted")
 
     now = datetime.now(timezone.utc)
 
@@ -575,31 +703,52 @@ async def finish_test(
     attempt_result = await db.execute(
         select(StudentAttempt).where(
             StudentAttempt.id == attempt_id,
-            StudentAttempt.student_id == user.id,
+            StudentAttempt.user_id == user.id,
         )
     )
     attempt = attempt_result.scalar_one_or_none()
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    if _status_value(attempt.status) in ("submitted", "auto_submitted"):
+    if _is_completed_status(attempt.status):
         raise HTTPException(status_code=400, detail="Already submitted")
 
-    now = datetime.now(timezone.utc)
-    requested_status = data.status if data.status in ("submitted", "auto_submitted") else "submitted"
-    attempt.status = (
-        AttemptStatus.AUTO_SUBMITTED
-        if requested_status == "auto_submitted"
-        else AttemptStatus.SUBMITTED
-    )
-    attempt.submitted_at = now
-    attempt.submission_reason = (
-        SubmissionReason.TIME_EXPIRED
-        if requested_status == "auto_submitted" or now > ensure_aware(attempt.expires_at)
-        else SubmissionReason.MANUAL
-    )
+    # Server-side expiry enforcement: if the timer has already passed, the
+    # attempt was auto-submitted by the server and a manual finish is refused.
+    if await auto_submit_expired(db, attempt):
+        raise HTTPException(status_code=400, detail="Attempt expired and has been auto-submitted")
 
-    # Calculate total score from the LATEST submission per question (avoid double counting)
+    now = datetime.now(timezone.utc)
+    expires_at = ensure_aware(attempt.expires_at)
+    grace = timedelta(seconds=settings.SUBMISSION_GRACE_PERIOD_SECONDS)
+
+    # The server — not the client — decides the final status.
+    # If the server-side timer has expired (with grace), mark auto_submitted.
+    # Otherwise it is a manual submission regardless of what the client sent.
+    # This eliminates phantom auto_submitted rows caused by client-clock skew.
+    if now > expires_at + grace:
+        attempt.status = AttemptStatus.AUTO_SUBMITTED.value
+        finish_reason = SubmissionReason.TIME_EXPIRED.value
+        _log_attempt(
+            "finish_test_decision",
+            student_id=user.id,
+            test_id=attempt.test_id,
+            attempt_id=attempt_id,
+            reason=f"server_timer_expired expires_at={expires_at.isoformat()} now={now.isoformat()}",
+        )
+    else:
+        attempt.status = AttemptStatus.SUBMITTED.value
+        finish_reason = SubmissionReason.MANUAL.value
+        _log_attempt(
+            "finish_test_decision",
+            student_id=user.id,
+            test_id=attempt.test_id,
+            attempt_id=attempt_id,
+            reason=f"manual_submit remaining_secs={int((expires_at - now).total_seconds())}",
+        )
+
+    attempt.submitted_at = now
+
     subs_result = await db.execute(
         select(Submission).where(Submission.attempt_id == attempt_id)
     )
@@ -607,16 +756,24 @@ async def finish_test(
     scores_by_question = {}
     for s in submissions:
         scores_by_question[s.question_id] = s.score
-    attempt.total_score = sum(scores_by_question.values())
+    attempt.score = int(sum(scores_by_question.values()))
 
     await db.flush()
+
+    _log_attempt(
+        "attempt_finish",
+        student_id=user.id,
+        test_id=attempt.test_id,
+        attempt_id=attempt_id,
+        reason=f"status={attempt.status} submission_reason={finish_reason}",
+    )
 
     return {
         "message": "Test submitted successfully",
         "attempt_id": attempt.id,
         "test_id": attempt.test_id,
         "submitted_at": now.isoformat(),
-        "status": requested_status,
-        "total_score": attempt.total_score,
-        "violation_count": attempt.violation_count,
+        "status": attempt.status,
+        "total_score": float(attempt.score or 0),
+        "violation_count": attempt.violation_count or 0,
     }

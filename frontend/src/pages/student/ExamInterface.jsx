@@ -6,7 +6,6 @@ import { useAuth } from '../../context/AuthContext';
 import { studentAPI, codeAPI, getErrorMessage } from '../../services/api';
 import toast from 'react-hot-toast';
 import WebcamProctor from '../../components/WebcamProctor';
-import LeetCodeTestPanel from '../../components/execution/LeetCodeTestPanel';
 import { executionClient, getVerdict } from '../../services/executionClient';
 import {
   HiOutlineCode, HiOutlinePlay, HiOutlineUpload, HiOutlineClock,
@@ -64,6 +63,10 @@ export default function ExamInterface() {
   const lastSavedCode = useRef('');
   const violationDebounce = useRef(0);
   const violationCounts = useRef({ face_turned: 0, multiple_faces: 0 });
+  // autoSubmittedRef must be declared at the top so loadAttempt can reset it
+  // on every fresh mount. Declaring it near the timer caused a stale-ref bug
+  // where a refresh left it as `true` and prevented re-submission.
+  const autoSubmittedRef = useRef(false);
   const judgeStageTimer = useRef(null);
 
   // Advance the "Connecting -> Container -> Compiling -> Running -> Evaluating"
@@ -102,6 +105,10 @@ export default function ExamInterface() {
         return;
       }
 
+      // Reset autoSubmit guard on every fresh load so a refresh never gets
+      // stuck with the flag set from a previous render that failed to navigate.
+      autoSubmittedRef.current = false;
+
       setAttempt(att);
       setViolationCount(att.violation_count || 0);
 
@@ -109,6 +116,20 @@ export default function ExamInterface() {
         navigate(`/student/exam/${attemptId}/complete`, { replace: true });
         return;
       }
+
+      // Compute time remaining from server's expires_at — never from client clock.
+      const parseUTC = (str) => {
+        if (!str) return Date.now() + 3600000;
+        if (typeof str === 'number') return str;
+        const s = String(str).trim();
+        const hasTZ = s.endsWith('Z') || s.includes('+') || (s.lastIndexOf('-') > 10);
+        return new Date(hasTZ ? s : `${s}Z`).getTime();
+      };
+      const expiresAt = parseUTC(att.expires_at);
+      const now = Date.now();
+      const diffSec = Math.floor((expiresAt - now) / 1000);
+      // Set to 0 if already expired — the timer useEffect will fire auto-submit.
+      setTimeLeft(Math.max(0, diffSec));
 
       const questionsRes = await studentAPI.getAttemptQuestions(attemptId);
       const qs = questionsRes?.data;
@@ -125,29 +146,23 @@ export default function ExamInterface() {
       setLanguage(initialLang);
       setCode(initialCode);
       lastSavedCode.current = saved.saved_code || '';
-
-      const parseUTC = (str) => {
-        if (!str) return Date.now();
-        if (typeof str === 'number') return str;
-        const s = String(str).trim();
-        const hasTZ = s.endsWith('Z') || s.includes('+') || (s.lastIndexOf('-') > 10);
-        return new Date(hasTZ ? s : `${s}Z`).getTime();
-      };
-
-      const expiresAt = parseUTC(att.expires_at || (Date.now() + 3600000));
-      const now = Date.now();
-      const diffSec = Math.floor((expiresAt - now) / 1000);
-      setTimeLeft(Math.max(0, diffSec));
     } catch (err) {
       console.warn("loadAttempt error:", err);
-      setLoadError(err.response?.data?.detail || 'Failed to load the examination. Please try again.');
+      const detail = err.response?.data?.detail || '';
+      // The server may transition a timed-out attempt to auto_submitted between
+      // the getAttempt and getAttemptQuestions calls. That is authoritative:
+      // route to the results screen instead of showing "Failed to load".
+      if (err.response?.status === 400 && /(expired|auto-submitted|already been submitted)/i.test(detail)) {
+        navigate(`/student/exam/${attemptId}/complete`, { replace: true });
+        return;
+      }
+      setLoadError(detail || 'Failed to load the examination. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   // ─── Timer ─────────────────────────────────────
-  const autoSubmittedRef = useRef(false);
 
   useEffect(() => {
     if (loading || !attempt || autoSubmittedRef.current) return;
@@ -476,13 +491,36 @@ export default function ExamInterface() {
       await studentAPI.finishTest(attemptId);
       navigate(`/student/exam/${attemptId}/complete`, { replace: true });
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error finishing test');
+      const detail = err.response?.data?.detail || '';
+      if (err.response?.status === 400 && /(expired|already|auto-submitted)/i.test(detail)) {
+        navigate(`/student/exam/${attemptId}/complete`, { replace: true });
+      } else {
+        toast.error(detail || 'Error finishing test');
+      }
     } finally { setSubmittingTest(false); setShowFinishModal(false); }
   };
 
   const handleAutoSubmit = async (reason) => {
-    try { await studentAPI.finishTest(attemptId, 'auto_submitted'); }
-    catch { /* already submitted */ }
+    // The server decides the final status (submitted vs auto_submitted) based
+    // solely on server-side expiry time. We always call finishTest with the
+    // default 'submitted' status — the backend will promote to 'auto_submitted'
+    // when the server-side timer has passed. This prevents phantom
+    // auto_submitted rows caused by client-clock skew.
+    try {
+      await studentAPI.finishTest(attemptId);
+    } catch (err) {
+      const detail = err.response?.data?.detail || '';
+      const confirmedDone =
+        err.response?.status === 400 &&
+        /(submitted|expired|already)/i.test(detail);
+      if (!confirmedDone) {
+        autoSubmittedRef.current = false;
+        toast.error('Could not auto-submit your exam. Reconnecting...');
+        return;
+      }
+      // confirmedDone: the server already completed it (expired or submitted).
+      // Fall through and navigate.
+    }
     navigate(`/student/exam/${attemptId}/complete`, { replace: true });
   };
 

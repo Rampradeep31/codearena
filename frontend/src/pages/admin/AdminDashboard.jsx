@@ -82,7 +82,7 @@ export default function AdminDashboard() {
     );
     filteredTests = filteredTests.filter(t => t.year === selectedYear);
     filteredAttempts = filteredAttempts.filter(a => {
-      const s = students.find(x => x.id === a.user_id || x.register_number === a.register_number);
+      const s = students.find(x => x.id === (a.student_id || a.user_id) || x.register_number === a.register_number);
       return s && (
         s.year === targetYearNum || 
         String(s.year) === String(targetYearNum) ||
@@ -102,7 +102,7 @@ export default function AdminDashboard() {
   if (selectedSection !== 'All') {
     filteredStudents = filteredStudents.filter(s => s.section === selectedSection);
     filteredAttempts = filteredAttempts.filter(a => {
-      const s = students.find(x => x.id === a.user_id);
+      const s = students.find(x => x.id === (a.student_id || a.user_id));
       return s && s.section === selectedSection;
     });
   }
@@ -158,7 +158,7 @@ export default function AdminDashboard() {
   }
 
   // Attendance rate (unique student attempts / eligible student base)
-  const uniqueAttemptingStudents = new Set(filteredAttempts.map(a => a.user_id));
+  const uniqueAttemptingStudents = new Set(filteredAttempts.map(a => a.student_id || a.user_id));
   const attendanceRate = totalStudentsCount > 0 
     ? Math.round((uniqueAttemptingStudents.size / totalStudentsCount) * 100) 
     : 0;
@@ -169,7 +169,7 @@ export default function AdminDashboard() {
     const yearStuds = students.filter(s => s.year === yearNum);
     const yearTests = tests.filter(t => t.year === yearStr);
     const yearAttempts = attempts.filter(a => {
-      const s = students.find(x => x.id === a.user_id);
+      const s = students.find(x => x.id === (a.student_id || a.user_id));
       return s && s.year === yearNum;
     });
     const yearCompleted = yearAttempts.filter(a => a.status === 'submitted' || a.status === 'auto_submitted');
@@ -193,7 +193,7 @@ export default function AdminDashboard() {
       passPercent = Math.round((passCount / yearCompleted.length) * 100);
     }
 
-    const yearAttemptingStudents = new Set(yearAttempts.map(a => a.user_id));
+    const yearAttemptingStudents = new Set(yearAttempts.map(a => a.student_id || a.user_id));
     const attendance = yearStuds.length > 0 
       ? Math.round((yearAttemptingStudents.size / yearStuds.length) * 100) 
       : 0;

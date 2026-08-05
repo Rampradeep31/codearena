@@ -9,6 +9,7 @@ class AttemptStatus(str, enum.Enum):
     IN_PROGRESS = "in_progress"
     SUBMITTED = "submitted"
     AUTO_SUBMITTED = "auto_submitted"
+    EXPIRED = "expired"
 
 
 class SubmissionReason(str, enum.Enum):
@@ -18,10 +19,12 @@ class SubmissionReason(str, enum.Enum):
 
 
 class StudentAttempt(Base):
-    __tablename__ = "student_attempts"
+    """Maps to Supabase public.test_attempts (single source of truth)."""
+
+    __tablename__ = "test_attempts"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    student_id: Mapped[int] = mapped_column(
+    user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     test_id: Mapped[int] = mapped_column(
@@ -30,17 +33,31 @@ class StudentAttempt(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    status: Mapped[AttemptStatus] = mapped_column(
-        String(20), nullable=False, default=AttemptStatus.IN_PROGRESS
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AttemptStatus.IN_PROGRESS.value
     )
-    violation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    submission_reason: Mapped[str] = mapped_column(String(20), nullable=True)
-    total_score: Mapped[float] = mapped_column(Float, nullable=True, default=0)
-    total_possible: Mapped[float] = mapped_column(Float, nullable=True, default=0)
+    violation_count: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
+    score: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
 
     __table_args__ = (
-        UniqueConstraint("student_id", "test_id", name="uq_student_test"),
+        UniqueConstraint("user_id", "test_id", name="uq_user_test"),
     )
+
+    @property
+    def student_id(self) -> int:
+        return self.user_id
+
+    @student_id.setter
+    def student_id(self, value: int) -> None:
+        self.user_id = value
+
+    @property
+    def total_score(self) -> float:
+        return float(self.score or 0)
+
+    @total_score.setter
+    def total_score(self, value) -> None:
+        self.score = int(value or 0)
 
 
 class StudentQuestion(Base):
@@ -49,12 +66,16 @@ class StudentQuestion(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     attempt_id: Mapped[int] = mapped_column(
-        ForeignKey("student_attempts.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("test_attempts.id", ondelete="CASCADE"), nullable=False, index=True
     )
     question_id: Mapped[int] = mapped_column(
         ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "question_id", name="uq_student_question_attempt_question"),
+    )
 
 
 class StudentCode(Base):
@@ -63,7 +84,7 @@ class StudentCode(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     attempt_id: Mapped[int] = mapped_column(
-        ForeignKey("student_attempts.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("test_attempts.id", ondelete="CASCADE"), nullable=False, index=True
     )
     question_id: Mapped[int] = mapped_column(
         ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
@@ -74,41 +95,44 @@ class StudentCode(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "question_id", name="uq_student_code_attempt_question"),
+    )
+
 
 class Submission(Base):
-    """Final code submission for a question."""
+    """Final code submission for a question (Supabase public.submissions)."""
     __tablename__ = "submissions"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     attempt_id: Mapped[int] = mapped_column(
-        ForeignKey("student_attempts.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("test_attempts.id", ondelete="CASCADE"), nullable=False, index=True
     )
     question_id: Mapped[int] = mapped_column(
         ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
     )
-    language: Mapped[str] = mapped_column(String(20), nullable=False)
-    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String(20), nullable=False, default="python")
+    source_code: Mapped[str] = mapped_column("code", Text, nullable=False, default="")
     submitted_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        "created_at", DateTime(timezone=True), server_default=func.now()
     )
-    score: Mapped[float] = mapped_column(Float, nullable=False, default=0)
-    total_test_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    passed_test_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(50), nullable=True, default="submitted")
+    score: Mapped[float] = mapped_column(Float, nullable=True, default=0)
+    total_test_cases: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
+    passed_test_cases: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
 
 
 class SubmissionResult(Base):
-    """Per-test-case result for a submission."""
+    """Per-test-case result for a submission (backend-managed detail table)."""
     __tablename__ = "submission_results"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     submission_id: Mapped[int] = mapped_column(
         ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # Plain integer: test cases may come from the Supabase mirror or a sample
-    # fallback whose IDs do not exist in the local test_cases table.
     test_case_id: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
     passed: Mapped[bool] = mapped_column(nullable=False, default=False)
     output: Mapped[str] = mapped_column(Text, nullable=True)
     execution_time: Mapped[float] = mapped_column(Float, nullable=True)
     memory_used: Mapped[int] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(String(50), nullable=True)  # e.g., "Accepted", "Wrong Answer", "TLE"
+    status: Mapped[str] = mapped_column(String(50), nullable=True)

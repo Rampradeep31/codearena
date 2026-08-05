@@ -18,7 +18,7 @@ class Violation(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     attempt_id: Mapped[int] = mapped_column(
-        ForeignKey("student_attempts.id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("test_attempts.id", ondelete="CASCADE"), nullable=False, index=True
     )
     violation_type: Mapped[ViolationType] = mapped_column(
         String(30), nullable=False

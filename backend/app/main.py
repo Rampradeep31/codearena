@@ -7,12 +7,41 @@ from app.api.auth import router as auth_router
 from app.api.admin import router as admin_router
 from app.api.students import router as student_router
 from app.api.execution import router as execution_router
+import logging
+import sys
+
+
+# ── Structured logging setup ────────────────────────────────────────────────
+# Emit to stdout so Render / Docker can capture logs without file rotation.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+    stream=sys.stdout,
+)
+# Suppress noisy third-party loggers
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: create tables on startup."""
+    """Application lifespan: create tables on startup, log compiler status."""
     await create_tables()
+    # Log compiler availability so Render deployment logs clearly show whether
+    # Python/Java/GCC/G++ are present inside the container.
+    try:
+        from app.services.local_executor import LocalCodeExecutor
+        diag = LocalCodeExecutor.get_diagnostics()
+        compilers = diag.get("compilers", {})
+        startup_logger = logging.getLogger("startup")
+        for name, info in compilers.items():
+            status = "OK" if info.get("available") else "MISSING"
+            version = info.get("version", "unknown")
+            path = info.get("path", "N/A")
+            startup_logger.info(f"Compiler {name}: {status} | {version} | {path}")
+    except Exception as e:
+        logging.getLogger("startup").warning(f"Compiler diagnostic failed: {e}")
     yield
 
 
@@ -26,9 +55,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-
-
-import logging
 
 logger = logging.getLogger("main")
 

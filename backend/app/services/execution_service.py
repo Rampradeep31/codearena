@@ -112,11 +112,17 @@ async def run_against_test_cases(
         # 1. Exact match (already stripped)
         # 2. Line by line strip
         # 3. Token by token split
+        # 4. Case-insensitive boolean (Python True/False vs true/false)
         def compare_outputs(act: str, exp: str) -> bool:
             if act == exp: return True
+            # Case-normalise Python booleans (True→true, False→false, None→none)
+            def norm_bools(s: str) -> str:
+                return s.replace("True", "true").replace("False", "false").replace("None", "none")
+            if norm_bools(act) == norm_bools(exp): return True
             act_lines = [l.strip() for l in act.splitlines() if l.strip()]
             exp_lines = [l.strip() for l in exp.splitlines() if l.strip()]
             if act_lines == exp_lines: return True
+            if [norm_bools(l) for l in act_lines] == [norm_bools(l) for l in exp_lines]: return True
             
             act_tokens = act.split()
             exp_tokens = exp.split()
@@ -125,7 +131,7 @@ async def run_against_test_cases(
             if len(act_tokens) == len(exp_tokens):
                 match = True
                 for a, e in zip(act_tokens, exp_tokens):
-                    if a == e:
+                    if a == e or norm_bools(a) == norm_bools(e):
                         continue
                     try:
                         if abs(float(a) - float(e)) > 1e-6:

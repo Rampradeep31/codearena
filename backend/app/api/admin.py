@@ -24,6 +24,7 @@ from app.schemas.schemas import (
 from app.security.dependencies import require_admin
 from app.security.hashing import hash_password
 from app.utils import ensure_aware
+from app.services.attempt_lifecycle import submission_reason_for_status
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -116,6 +117,9 @@ async def get_dashboard_stats(
         select(QuestionBank).order_by(QuestionBank.created_at.desc())
     )).scalars().all()
 
+    # Lookup used to fill total_possible (attempts do not store it).
+    test_marks = {t.id: t.total_marks for t in tests}
+
     return DashboardData(
         total_students=total_students,
         total_tests=total_tests,
@@ -135,13 +139,14 @@ async def get_dashboard_stats(
         questions=[_question_out(q) for q in questions],
         attempts=[
             AttemptOut(
-                id=a.id, student_id=a.student_id, test_id=a.test_id,
+                id=a.id, student_id=a.user_id, test_id=a.test_id,
                 started_at=a.started_at, expires_at=a.expires_at,
                 submitted_at=a.submitted_at,
                 status=a.status if isinstance(a.status, str) else a.status.value,
-                violation_count=a.violation_count,
-                submission_reason=a.submission_reason,
-                total_score=a.total_score, total_possible=a.total_possible,
+                violation_count=a.violation_count or 0,
+                submission_reason=submission_reason_for_status(a.status),
+                total_score=float(a.score or 0),
+                total_possible=test_marks.get(a.test_id),
             ) for a in attempts
         ],
         submissions=[SubmissionOut.from_orm(s) for s in submissions],
@@ -860,6 +865,12 @@ async def get_test_results(
     admin: User = Depends(require_admin),
 ):
     """Get results for a test."""
+    test_result = await db.execute(select(Test).where(Test.id == test_id))
+    test = test_result.scalar_one_or_none()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+    total_possible = test.total_marks or 0
+
     attempts_result = await db.execute(
         select(StudentAttempt).where(StudentAttempt.test_id == test_id)
     )
@@ -897,7 +908,6 @@ async def get_test_results(
         questions_solved = sum(1 for s in submissions if s.passed_test_cases == s.total_test_cases)
 
         score = attempt.total_score or 0
-        total_possible = attempt.total_possible or 0
         percentage = (score / total_possible * 100) if total_possible > 0 else 0
 
         rows.append(ResultRow(
@@ -912,7 +922,7 @@ async def get_test_results(
             total_possible=total_possible,
             percentage=round(percentage, 2),
             violation_count=attempt.violation_count,
-            submission_type=attempt.submission_reason,
+            submission_type=submission_reason_for_status(attempt.status),
             submitted_at=attempt.submitted_at,
         ))
 
