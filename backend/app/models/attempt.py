@@ -43,6 +43,13 @@ class StudentAttempt(Base):
         UniqueConstraint("user_id", "test_id", name="uq_user_test"),
     )
 
+    # ── Compatibility shims (instance-level reads only) ──────────────
+    # These exist so legacy call sites like attempt.student_id / attempt.total_score
+    # keep working after the student_id→user_id and total_score→score renames.
+    # They are plain Python properties, NOT mapped columns: in SQLAlchemy WHERE
+    # filters you MUST use StudentAttempt.user_id / StudentAttempt.score.
+    # Using StudentAttempt.student_id in a .where() silently yields WHERE false
+    # (a property object never equals an int), hiding all rows.
     @property
     def student_id(self) -> int:
         return self.user_id

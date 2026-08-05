@@ -477,6 +477,73 @@ async def test_admin_dashboard_and_results(client):
     assert rows[0]["submission_type"] == "manual"
 
 
+async def test_admin_monitor_and_violation_filters(client):
+    """Monitor and violations endpoints must key on the mapped user_id column.
+
+    Regression: StudentAttempt.student_id is only an instance-level property
+    shim, NOT a mapped column. Using it inside a .where() silently produced
+    WHERE false and hid every row. These queries must filter on user_id.
+    """
+    await _make_admin()
+    qid = await _make_question()
+    await _make_test_case(qid, "2 3", "5")
+    tid = await _make_test(name="Proctored Exam", questions_per_student=1, easy_count=1)
+    await _link_question_to_test(tid, qid)
+
+    # Student A starts the test and triggers one violation.
+    headers = await _student_headers(client, "MON001", "Monitored Student")
+    res = await client.post(f"/student/tests/{tid}/start", headers=headers)
+    assert res.status_code == 200, res.text
+    attempt_id = res.json()["id"]
+    res = await client.post(
+        f"/student/attempts/{attempt_id}/violations",
+        headers=headers,
+        json={"violation_type": "tab_hidden"},
+    )
+    assert res.status_code == 200
+    assert res.json()["violation_count"] == 1
+
+    # Student B exists but never starts -> monitor must show not_started.
+    await _student_headers(client, "MON002", "Never Started")
+
+    admin_headers = {"Authorization": "Bearer " + await _login_admin(client)}
+
+    # Live monitor: both students present, A writing with 1 violation.
+    res = await client.get(f"/admin/tests/{tid}/monitor", headers=admin_headers)
+    assert res.status_code == 200, res.text
+    rows = {r["register_number"]: r for r in res.json()}
+    assert rows["MON001"]["status"] == "writing"
+    assert rows["MON001"]["violation_count"] == 1
+    assert rows["MON002"]["status"] == "not_started"
+    mon001_id = rows["MON001"]["student_id"]
+
+    # Violations filtered by test only.
+    res = await client.get(f"/admin/violations?test_id={tid}", headers=admin_headers)
+    assert res.status_code == 200, res.text
+    assert len(res.json()) == 1
+    assert res.json()[0]["violation_type"] == "tab_hidden"
+
+    # Violations filtered by student only (the branch that used to hide rows).
+    res = await client.get(f"/admin/violations?student_id={mon001_id}", headers=admin_headers)
+    assert res.status_code == 200, res.text
+    assert len(res.json()) == 1
+
+    # Combined filters.
+    res = await client.get(
+        f"/admin/violations?test_id={tid}&student_id={mon001_id}",
+        headers=admin_headers,
+    )
+    assert res.status_code == 200, res.text
+    assert len(res.json()) == 1
+
+    # A student id with no violations -> empty list, not a server error.
+    res = await client.get(
+        f"/admin/violations?student_id={mon001_id + 99999}", headers=admin_headers
+    )
+    assert res.status_code == 200
+    assert res.json() == []
+
+
 async def _login_admin(client):
     # The server-side admin login path (not the frontend hardcoded shortcut).
     r = await client.post(

@@ -227,7 +227,33 @@ async def sync_supabase_columns():
 
 
 async def drop_tables():
-    """Drop all tables. Used during development."""
+    """Drop all tables (ORM metadata + any legacy leftovers). Used during development."""
+    from sqlalchemy import inspect
+
     async with engine.begin() as conn:
         from app.models import user, test, question, attempt, violation  # noqa: F401
-        await conn.run_sync(Base.metadata.drop_all)
+        if db_url.startswith("sqlite"):
+            # Disable FK enforcement while dropping: SQLite's DROP TABLE performs
+            # an implicit DELETE that resolves FK references across the whole
+            # schema. Leftover legacy tables (e.g. student_attempts) that still
+            # reference tables already gone (like ``tests`` in a drifted DB) then
+            # raise ``no such table: main.<name>`` instead of dropping cleanly.
+            # Must be the first statement in the block: SQLite only honours the
+            # pragma while no transaction is pending.
+            await conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        try:
+            await conn.run_sync(Base.metadata.drop_all)
+            if db_url.startswith("sqlite"):
+                # Drop leftovers that are not part of the ORM metadata (e.g. the
+                # legacy student_attempts table) so a re-seed starts truly clean.
+                for name in await conn.run_sync(lambda c: inspect(c).get_table_names()):
+                    await conn.exec_driver_sql(
+                        f'DROP TABLE IF EXISTS "{name.replace(chr(34), chr(34) * 2)}"'
+                    )
+        finally:
+            if db_url.startswith("sqlite"):
+                # Restore enforcement: the pragma is per-connection and survives
+                # the return to the pool (the connect listener only fires for new
+                # connections), so without this the app would keep running with
+                # FK checks silently disabled on this pooled connection.
+                await conn.exec_driver_sql("PRAGMA foreign_keys=ON")

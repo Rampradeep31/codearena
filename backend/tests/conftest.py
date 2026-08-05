@@ -127,7 +127,16 @@ async def _link_question_to_test(test_id, qid):
 
 
 async def _make_admin():
+    # Idempotent: the admin row is unique by email, and multiple tests call this
+    # helper against the same session-scoped database.
     async with AsyncSessionLocal() as s:
+        from sqlalchemy import select
+
+        existing = (
+            await s.execute(select(user.User).where(user.User.email == "admin@test.local"))
+        ).scalar_one_or_none()
+        if existing:
+            return existing.id
         u = user.User(
             email="admin@test.local",
             register_number="ADMIN001",

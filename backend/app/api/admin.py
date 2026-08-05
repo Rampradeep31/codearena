@@ -783,7 +783,7 @@ async def monitor_test(
         # Get attempt for this test
         attempt_result = await db.execute(
             select(StudentAttempt).where(
-                StudentAttempt.student_id == student.id,
+                StudentAttempt.user_id == student.id,
                 StudentAttempt.test_id == test_id,
             )
         )
@@ -849,7 +849,7 @@ async def monitor_test(
             status=status_str,
             questions_attempted=questions_attempted,
             questions_submitted=questions_submitted,
-            violation_count=attempt.violation_count,
+            violation_count=attempt.violation_count or 0,
             remaining_seconds=remaining,
             last_activity=last_activity,
         ))
@@ -905,7 +905,13 @@ async def get_test_results(
             select(Submission).where(Submission.attempt_id == attempt.id)
         )
         submissions = subs_result.scalars().all()
-        questions_solved = sum(1 for s in submissions if s.passed_test_cases == s.total_test_cases)
+        # A submission only counts as solved when it actually ran against test
+        # cases: NULL/0 totals (legacy or ungraded rows) must not be treated as
+        # fully solved, since None == None would otherwise count them.
+        questions_solved = sum(
+            1 for s in submissions
+            if s.total_test_cases and s.passed_test_cases == s.total_test_cases
+        )
 
         score = attempt.total_score or 0
         percentage = (score / total_possible * 100) if total_possible > 0 else 0
@@ -921,7 +927,7 @@ async def get_test_results(
             score=score,
             total_possible=total_possible,
             percentage=round(percentage, 2),
-            violation_count=attempt.violation_count,
+            violation_count=attempt.violation_count or 0,
             submission_type=submission_reason_for_status(attempt.status),
             submitted_at=attempt.submitted_at,
         ))
@@ -950,9 +956,9 @@ async def list_violations(
         query = query.join(StudentAttempt).where(StudentAttempt.test_id == test_id)
     if student_id:
         if test_id:
-            query = query.where(StudentAttempt.student_id == student_id)
+            query = query.where(StudentAttempt.user_id == student_id)
         else:
-            query = query.join(StudentAttempt).where(StudentAttempt.student_id == student_id)
+            query = query.join(StudentAttempt).where(StudentAttempt.user_id == student_id)
     if violation_type:
         query = query.where(Violation.violation_type == violation_type)
 
