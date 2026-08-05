@@ -51,6 +51,13 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+PROD_POSTGRES_URL = "postgresql://postgres:RagavDeepika1430@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
+
+# If environment variable contains a stale SQLite URL in production, sanitize to PostgreSQL
+if settings.DATABASE_URL.startswith("sqlite") and settings.JUDGE_ENGINE != "local":
+    print("WARNING: Stale SQLite DATABASE_URL detected in production environment. Overriding with production PostgreSQL URL.")
+    settings.DATABASE_URL = PROD_POSTGRES_URL
+
 # Random JWT secret generated once at startup (only when JWT_SECRET env is unset).
 # Wrapped in a property so consumers use settings.jwt_secret without exposing the raw field.
 if not settings.JWT_SECRET:

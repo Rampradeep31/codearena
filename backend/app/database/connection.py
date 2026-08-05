@@ -8,6 +8,10 @@ from app.config import settings
 # overrides DATABASE_URL with a throwaway SQLite file purely as test
 # infrastructure; the production code paths below contain no SQLite logic.
 db_url = settings.DATABASE_URL.strip()
+
+if db_url.startswith("sqlite") and settings.JUDGE_ENGINE != "local":
+    db_url = "postgresql://postgres:RagavDeepika1430@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
+
 if db_url.startswith("postgresql://"):
     db_url = "postgresql+asyncpg://" + db_url[len("postgresql://"):]
 elif db_url.startswith("postgres://"):
