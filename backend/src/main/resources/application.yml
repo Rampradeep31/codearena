@@ -1,0 +1,60 @@
+server:
+  port: ${PORT:8000}
+
+spring:
+  application:
+    name: codearena-backend
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      max-lifetime: 3600000
+      connection-test-query: SELECT 1
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 25
+        query:
+          in_clause_parameter_padding: true
+    show-sql: false
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:}
+    algorithm: ${JWT_ALGORITHM:HS256}
+    expiry-minutes: ${JWT_EXPIRY_MINUTES:480}
+  judge:
+    engine: ${JUDGE_ENGINE:docker}
+    code-timeout-seconds: ${CODE_TIMEOUT_SECONDS:15.0}
+    timeout-python: ${TIMEOUT_PYTHON:15.0}
+    timeout-c: ${TIMEOUT_C:15.0}
+    timeout-cpp: ${TIMEOUT_CPP:15.0}
+    timeout-java: ${TIMEOUT_JAVA:15.0}
+    code-memory-limit-kb: ${CODE_MEMORY_LIMIT_KB:262144}
+    max-concurrent-executions: ${MAX_CONCURRENT_EXECUTIONS:20}
+    max-processes-per-submission: ${MAX_PROCESSES_PER_SUBMISSION:64}
+    image-python: ${JUDGE_IMAGE_PYTHON:python:3.11-slim}
+    image-java: ${JUDGE_IMAGE_JAVA:eclipse-temurin:17-jdk-alpine}
+    image-c: ${JUDGE_IMAGE_C:gcc:13}
+    image-cpp: ${JUDGE_IMAGE_CPP:gcc:13}
+  violations:
+    max-default: ${MAX_VIOLATIONS_DEFAULT:3}
+    max-face-turn: ${MAX_FACE_TURN_VIOLATIONS:2}
+  cors:
+    origins: ${CORS_ORIGINS:http://localhost:5173,https://codearena-indol.vercel.app}
+  auto-save-interval-seconds: ${AUTO_SAVE_INTERVAL_SECONDS:15}
+  submission-grace-period-seconds: ${SUBMISSION_GRACE_PERIOD_SECONDS:5}
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: WARN
+    org.hibernate.SQL: WARN
