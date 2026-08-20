@@ -36,6 +36,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Set<String> PUBLIC_PATHS =
             Set.of("/health", "/auth/login", "/auth/student-entry", "/code/compiler/status");
 
+    // Only these path prefixes are ever real API routes; anything else is
+    // frontend serving (index.html, /assets/*, SPA client routes like
+    // /admin/tests navigated to directly) and must never require a bearer
+    // token -- a page load can't attach one. This does mean a real API path
+    // hit via direct browser navigation without a token 401s instead of
+    // falling back to the SPA, matching the Python single-service app's
+    // own pre-existing router-registration-order behavior exactly.
+    private static final List<String> API_PATH_PREFIXES = List.of("/auth", "/admin", "/student", "/code");
+
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
@@ -48,7 +57,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return PUBLIC_PATHS.contains(request.getRequestURI());
+        String path = request.getRequestURI();
+        if (PUBLIC_PATHS.contains(path)) {
+            return true;
+        }
+        boolean isApiPath = API_PATH_PREFIXES.stream().anyMatch(prefix -> path.equals(prefix) || path.startsWith(prefix + "/"));
+        return !isApiPath;
     }
 
     @Override

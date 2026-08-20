@@ -247,13 +247,20 @@ class AuthAndSecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void validTokenPassesAuthLayerAndReaches404NotYetBuilt() throws Exception {
+    void validTokenPassesAuthLayerAndReachesRouting() throws Exception {
         User admin = createUser("validadmin@codearena.com", "VALIDADMIN1", "pw", Role.ADMIN, true);
         String token = jwtService.generateToken(admin.getId(), Role.ADMIN);
 
-        // 404, not 401/403 -- proves the auth layer accepted the token and
-        // handed off to routing, which has no matching handler yet.
-        mockMvc.perform(get("/admin/probe-not-yet-built").header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
+        // Not 401/403 proves the auth layer accepted the token and handed
+        // off to routing. The exact downstream status (404, or 200 via the
+        // SPA fallback if a frontend build happens to be present on disk
+        // in this environment) is not the point here -- see
+        // FrontendServingIntegrationTest for that behavior specifically.
+        int status =
+                mockMvc.perform(get("/admin/probe-not-yet-built").header("Authorization", "Bearer " + token))
+                        .andReturn()
+                        .getResponse()
+                        .getStatus();
+        org.assertj.core.api.Assertions.assertThat(status).isNotIn(401, 403);
     }
 }
