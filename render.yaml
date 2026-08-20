@@ -1,8 +1,9 @@
 # ==============================================================================
 # Render Infrastructure as Code (Blueprint) for CodeArena
-# Single service: FastAPI (backend + Supabase, judge runs in Docker) serves
-# the built React frontend as static files under the same origin. See
-# backend/Dockerfile (multi-stage build) and backend/app/main.py.
+# Single service: Spring Boot (backend + Supabase, judge runs in Docker)
+# serves the built React frontend as static files under the same origin.
+# See backend/Dockerfile (multi-stage build) and
+# backend/src/main/java/com/codearena/controller/FrontendController.java.
 # ==============================================================================
 
 services:

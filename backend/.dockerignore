@@ -1,22 +1,5 @@
-# Python bytecode & cache
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Virtual environment
-.venv/
-venv/
-ENV/
-env/
-
-# Database files & local artifacts
-codearena.db
-*.sqlite
-*.sqlite3
+# Maven build output
+target/
 
 # Environment files with sensitive credentials
 .env

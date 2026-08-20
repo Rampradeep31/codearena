@@ -5,13 +5,14 @@
 # Build context is the REPO ROOT (see render.yaml: dockerContext: .), so this
 # file can COPY from both backend/ and frontend/.
 #
-# Stage 1 builds the React SPA. Stage 2 is the FastAPI backend, which serves
-# that build as static files (see app/main.py) alongside the API routes —
+# Stage 1 builds the React SPA. Stage 2 builds the Spring Boot backend.
+# Stage 3 is the runtime image, which serves the built frontend as static
+# files (see FrontendController/SpaWebConfig) alongside the API routes —
 # one deployed service, one origin, no CORS needed in production.
 #
 # The API container does NOT compile or run student code. Every submission is
-# executed by the Docker judge (backend/app/services/docker_executor.py) in an
-# isolated throwaway container, so no compilers are installed here.
+# executed by the Docker judge (DockerExecutionService) in an isolated
+# throwaway container, so no compilers are installed here.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -27,28 +28,28 @@ COPY frontend/ .
 RUN npm run build
 
 # ------------------------------------------------------------------------------
-# Stage 2: backend runtime
+# Stage 2: build the backend
 # ------------------------------------------------------------------------------
-FROM python:3.11-slim
+FROM maven:3.9-eclipse-temurin-17 AS backend-build
+WORKDIR /build
+COPY backend/pom.xml .
+RUN mvn -B -q dependency:go-offline
+COPY backend/src ./src
+RUN mvn -B -q -DskipTests package
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+# ------------------------------------------------------------------------------
+# Stage 3: backend runtime
+# ------------------------------------------------------------------------------
+FROM eclipse-temurin:17-jre-jammy
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY backend/requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+COPY --from=backend-build /build/target/codearena-backend-*.jar app.jar
 
-# Copy backend application code
-COPY backend/ .
-
-# Copy the built frontend — app/main.py looks for this directory ("frontend_dist"
-# next to the backend root) and serves it at "/", with API routes untouched.
+# Copy the built frontend — FrontendDistLocator looks for this directory
+# ("/app/frontend_dist") and serves it at "/", with API routes untouched.
 COPY --from=frontend-build /frontend/dist ./frontend_dist
 
 EXPOSE 8000
 
-CMD ["sh","-c","uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh","-c","java -jar app.jar --server.port=${PORT:-8000}"]
