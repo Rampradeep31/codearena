@@ -1,11 +1,11 @@
 import axios from 'axios';
 
-// Issue 7: Every request must go through VITE_API_URL. No hardcoded /
-// stale Render URLs. Fallbacks: the canonical Render blueprinted service
-// (codearena-api from render.yaml) in production, or the Vite proxy in dev.
+// Single-service deployment: the backend serves this frontend build, so API
+// calls are same-origin by default (empty base URL). Set VITE_API_URL only
+// if the frontend is ever deployed separately from the backend again.
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD ? 'https://codearena-api.onrender.com' : '/api');
+  (import.meta.env.PROD ? '' : '/api');
 
 // The FastAPI backend is the only data source. It reads/writes Supabase.
 // There is no direct frontend-to-Supabase access.

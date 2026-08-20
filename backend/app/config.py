@@ -4,8 +4,10 @@ import secrets
 
 
 class Settings(BaseSettings):
-    # Database — Supabase is the ONLY database. DATABASE_URL must be a Postgres connection string.
-    DATABASE_URL: str = "postgresql://postgres:RagavRevanya@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
+    # Database — Supabase is the ONLY database. DATABASE_URL must be a Postgres
+    # connection string, set via .env (local) or the Render dashboard (prod).
+    # No real credentials belong in this source file.
+    DATABASE_URL: str = "sqlite+aiosqlite:///./codearena.db"
 
     # JWT — if no secret is provided, a random one is generated at startup.
     # Set JWT_SECRET in production so tokens survive restarts.
@@ -51,12 +53,15 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-PROD_POSTGRES_URL = "postgresql://postgres:RagavRevanya@db.vubpgeagtfpqdojdiqtc.supabase.co:5432/postgres"
-
-# If environment variable contains a stale SQLite URL in production, sanitize to PostgreSQL
+# A SQLite DATABASE_URL is only valid for JUDGE_ENGINE=local (dev/test). In
+# any other mode this means DATABASE_URL wasn't actually set — fail loudly
+# instead of silently connecting to a hardcoded database.
 if settings.DATABASE_URL.startswith("sqlite") and settings.JUDGE_ENGINE != "local":
-    print("WARNING: Stale SQLite DATABASE_URL detected in production environment. Overriding with production PostgreSQL URL.")
-    settings.DATABASE_URL = PROD_POSTGRES_URL
+    raise RuntimeError(
+        "DATABASE_URL is not set (still the SQLite default) but JUDGE_ENGINE "
+        f"is {settings.JUDGE_ENGINE!r}. Set DATABASE_URL to a Postgres connection "
+        "string in .env or the deployment environment."
+    )
 
 # Random JWT secret generated once at startup (only when JWT_SECRET env is unset).
 # Wrapped in a property so consumers use settings.jwt_secret without exposing the raw field.
