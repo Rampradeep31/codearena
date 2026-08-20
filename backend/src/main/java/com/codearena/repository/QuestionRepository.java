@@ -25,4 +25,6 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
             @Param("search") String search);
 
     List<Question> findByIdIn(List<Long> ids);
+
+    long countByQuestionBankId(Long questionBankId);
 }

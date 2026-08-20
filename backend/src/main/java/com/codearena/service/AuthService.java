@@ -10,8 +10,8 @@ import com.codearena.entity.enums.Role;
 import com.codearena.exception.ApiException;
 import com.codearena.repository.UserRepository;
 import com.codearena.security.JwtService;
-import java.security.SecureRandom;
-import java.util.Base64;
+import com.codearena.util.PythonTruthy;
+import com.codearena.util.TokenGenerator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +25,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthService {
 
     private static final Pattern DIGITS = Pattern.compile("\\d+");
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -82,8 +81,8 @@ public class AuthService {
         String regNo = registerNumberRaw.strip().toUpperCase();
         String email = regNo.toLowerCase() + "@codearena.com";
         int yearNum = parseYear(request.getYear());
-        String department = orDefault(request.getDepartment(), "AI & DS");
-        String section = orDefault(request.getSection(), "A");
+        String department = PythonTruthy.orDefault(request.getDepartment(), "AI & DS");
+        String section = PythonTruthy.orDefault(request.getSection(), "A");
 
         try {
             User user =
@@ -164,13 +163,7 @@ public class AuthService {
         return m.find() ? Integer.parseInt(m.group()) : 1;
     }
 
-    private String orDefault(String value, String fallback) {
-        return (value == null || value.isEmpty()) ? fallback : value;
-    }
-
     private String generateUnguessablePassword() {
-        byte[] bytes = new byte[24];
-        SECURE_RANDOM.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        return TokenGenerator.tokenUrlsafe(24);
     }
 }

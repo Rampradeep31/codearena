@@ -90,6 +90,13 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- CSV parsing for student bulk import -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-csv</artifactId>
+			<version>1.12.0</version>
+		</dependency>
+
 		<!-- Testcontainers (Postgres, seeded from the real supabase_schema.sql) -->
 		<dependency>
 			<groupId>org.testcontainers</groupId>
