@@ -11,13 +11,18 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
 
     List<Question> findAllByOrderByCreatedAtDesc();
 
+    // CAST(:search AS string) is required: Postgres cannot infer a type for
+    // a null-bound parameter inside lower(concat(...)) and fails at query
+    //-plan time with "function lower(bytea) does not exist" otherwise --
+    // this is not just a null-search edge case, it breaks EVERY call
+    // (including non-null searches) because Postgres plans the query once.
     @Query(
             "SELECT q FROM Question q WHERE "
                     + "(:difficulty IS NULL OR q.difficulty = :difficulty) AND "
                     + "(:topic IS NULL OR q.topic = :topic) AND "
                     + "(:search IS NULL OR "
-                    + "  lower(q.title) LIKE lower(concat('%', :search, '%')) OR "
-                    + "  lower(q.topic) LIKE lower(concat('%', :search, '%'))) "
+                    + "  lower(q.title) LIKE lower(concat('%', CAST(:search AS string), '%')) OR "
+                    + "  lower(q.topic) LIKE lower(concat('%', CAST(:search AS string), '%'))) "
                     + "ORDER BY q.createdAt DESC")
     List<Question> search(
             @Param("difficulty") Difficulty difficulty,

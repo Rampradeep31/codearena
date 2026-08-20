@@ -18,14 +18,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     List<User> findByRoleOrderByName(Role role);
 
+    // CAST(:search AS string) is required -- see the identical note in
+    // QuestionRepository.search; without it Postgres fails to plan the
+    // query at all ("function lower(bytea) does not exist"), for every
+    // call, not just null searches.
     @Query(
             "SELECT u FROM User u WHERE u.role = :role "
                     + "AND (:department IS NULL OR u.department = :department) "
                     + "AND (:year IS NULL OR u.year = :year) "
                     + "AND (:search IS NULL OR "
-                    + "     lower(u.name) LIKE lower(concat('%', :search, '%')) OR "
-                    + "     lower(u.registerNumber) LIKE lower(concat('%', :search, '%')) OR "
-                    + "     lower(u.email) LIKE lower(concat('%', :search, '%'))) "
+                    + "     lower(u.name) LIKE lower(concat('%', CAST(:search AS string), '%')) OR "
+                    + "     lower(u.registerNumber) LIKE lower(concat('%', CAST(:search AS string), '%')) OR "
+                    + "     lower(u.email) LIKE lower(concat('%', CAST(:search AS string), '%'))) "
                     + "ORDER BY u.name")
     List<User> searchStudents(
             @Param("role") Role role,

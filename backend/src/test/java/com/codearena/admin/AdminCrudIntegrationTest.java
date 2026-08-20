@@ -186,6 +186,51 @@ class AdminCrudIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void listQuestionsWorksWithAndWithoutSearchParams() throws Exception {
+        // Regression test: Postgres cannot infer a type for a null-bound
+        // JPQL parameter inside lower(concat(...)), which previously broke
+        // this query's *plan* entirely (not just the null case) with
+        // "function lower(bytea) does not exist" -- caught via real
+        // end-to-end browser testing against the frontend, not by any
+        // earlier unit/integration test, since none exercised this GET
+        // endpoint at all. See QuestionRepository.search's CAST fix.
+        String token = adminToken();
+        mockMvc.perform(
+                        post("/admin/questions")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"title\":\"Findable Question\",\"statement\":\"s\",\"difficulty\":\"easy\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/admin/questions").header("Authorization", "Bearer " + token)).andExpect(status().isOk());
+        mockMvc.perform(get("/admin/questions").param("search", "Findable").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].title").value("Findable Question"));
+        mockMvc.perform(get("/admin/questions").param("difficulty", "easy").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void listStudentsWorksWithAndWithoutSearchParams() throws Exception {
+        String token = adminToken();
+        mockMvc.perform(
+                        post("/admin/students")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"name\":\"Findable Student\",\"register_number\":\"FIND1\","
+                                                + "\"email\":\"find1@codearena.com\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/admin/students").header("Authorization", "Bearer " + token)).andExpect(status().isOk());
+        mockMvc.perform(get("/admin/students").param("search", "Findable").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Findable Student"));
+        mockMvc.perform(get("/admin/students").param("department", "CS").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void invalidDifficultyIs422() throws Exception {
         String token = adminToken();
         mockMvc.perform(
