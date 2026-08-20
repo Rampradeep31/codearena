@@ -15,4 +15,6 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
     List<Submission> findByAttemptIdAndQuestionId(Long attemptId, Long questionId);
 
     Optional<Submission> findFirstByAttemptIdAndQuestionIdOrderByCreatedAtDesc(Long attemptId, Long questionId);
+
+    long countByAttemptId(Long attemptId);
 }
