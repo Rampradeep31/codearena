@@ -27,4 +27,7 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     List<Question> findByIdIn(List<Long> ids);
 
     long countByQuestionBankId(Long questionBankId);
+
+    @Query("SELECT q FROM Question q JOIN TestQuestion tq ON tq.questionId = q.id WHERE tq.testId = :testId")
+    List<Question> findPoolByTestId(@Param("testId") Long testId);
 }

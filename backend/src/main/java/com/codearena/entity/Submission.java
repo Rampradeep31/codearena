@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import lombok.AllArgsConstructor;
@@ -42,7 +41,6 @@ public class Submission {
     @Builder.Default
     private String language = "python";
 
-    @Lob
     @Column(nullable = false, columnDefinition = "TEXT")
     @Builder.Default
     private String code = "";

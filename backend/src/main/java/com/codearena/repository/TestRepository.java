@@ -11,10 +11,14 @@ public interface TestRepository extends JpaRepository<Test, Long> {
 
     List<Test> findAllByOrderByCreatedAtDesc();
 
+    List<Test> findAllByOrderByStartTimeDesc();
+
     long countByStartTimeLessThanEqualAndEndTimeGreaterThanEqual(OffsetDateTime now1, OffsetDateTime now2);
 
     long countByEndTimeLessThan(OffsetDateTime now);
 
-    @Query("SELECT t FROM Test t WHERE t.year = :year OR t.year IS NULL")
-    List<Test> findByYearOrYearIsNull(@Param("year") String year);
+    @Query("SELECT t FROM Test t WHERE t.year = :year OR t.year IS NULL ORDER BY t.startTime DESC")
+    List<Test> findByYearOrYearIsNullOrderByStartTimeDesc(@Param("year") String year);
+
+    List<Test> findByIdIn(List<Long> ids);
 }

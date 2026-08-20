@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.OffsetDateTime;
@@ -44,7 +43,6 @@ public class StudentCode {
     @Builder.Default
     private String language = "python";
 
-    @Lob
     @Column(name = "source_code", columnDefinition = "TEXT")
     @Builder.Default
     private String sourceCode = "";

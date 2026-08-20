@@ -6,7 +6,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import lombok.AllArgsConstructor;
@@ -33,7 +32,6 @@ public class Question {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String title;
 
-    @Lob
     @Column(nullable = false, columnDefinition = "TEXT")
     private String statement;
 
@@ -51,27 +49,21 @@ public class Question {
     @Builder.Default
     private String topic = "General";
 
-    @Lob
     @Column(name = "input_format", columnDefinition = "TEXT")
     private String inputFormat;
 
-    @Lob
     @Column(name = "output_format", columnDefinition = "TEXT")
     private String outputFormat;
 
-    @Lob
     @Column(columnDefinition = "TEXT")
     private String constraints;
 
-    @Lob
     @Column(name = "sample_input", columnDefinition = "TEXT")
     private String sampleInput;
 
-    @Lob
     @Column(name = "sample_output", columnDefinition = "TEXT")
     private String sampleOutput;
 
-    @Lob
     @Column(columnDefinition = "TEXT")
     private String explanation;
 

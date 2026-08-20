@@ -2,6 +2,7 @@ package com.codearena.repository;
 
 import com.codearena.entity.Submission;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SubmissionRepository extends JpaRepository<Submission, Long> {
@@ -12,4 +13,6 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
     List<Submission> findByAttemptIdOrderByIdAsc(Long attemptId);
 
     List<Submission> findByAttemptIdAndQuestionId(Long attemptId, Long questionId);
+
+    Optional<Submission> findFirstByAttemptIdAndQuestionIdOrderByCreatedAtDesc(Long attemptId, Long questionId);
 }

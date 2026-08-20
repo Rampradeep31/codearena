@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import lombok.AllArgsConstructor;
@@ -31,11 +30,9 @@ public class TestCase {
     @Column(name = "question_id", nullable = false)
     private Long questionId;
 
-    @Lob
     @Column(nullable = false, columnDefinition = "TEXT")
     private String input;
 
-    @Lob
     @Column(name = "expected_output", nullable = false, columnDefinition = "TEXT")
     private String expectedOutput;
 
