@@ -145,12 +145,16 @@ COMPILER_LABELS = {
 
 def _find_python_cmd() -> Optional[str]:
     """Detect available python interpreter command or path."""
+    if sys.executable and os.path.exists(sys.executable):
+        return sys.executable
+    for cmd in ["python3", "python"]:
+        path = shutil.which(cmd)
+        if path and "WindowsApps" not in path:
+            return path
     if shutil.which("python3"):
         return shutil.which("python3")
     if shutil.which("python"):
         return shutil.which("python")
-    if sys.executable:
-        return sys.executable
     return None
 
 
