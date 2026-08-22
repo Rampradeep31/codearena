@@ -1,59 +1,47 @@
 # CodeArena – Online Coding Assessment Platform
 
-A production-style full-stack coding examination platform for colleges to conduct
-coding assessments for up to 70+ simultaneous students.
+A production-grade full-stack coding examination platform for colleges and universities to conduct proctored programming assessments for 60–100+ simultaneous students.
 
-## 🏗 Architecture
+---
+
+## 📖 Faculty & Administrator Guide
+For step-by-step lab deployment, Docker commands, student PC setup, and troubleshooting, read the **[FACULTY_GUIDE.md](file:///c:/Users/CSELAB6/Videos/codearena/codearena/FACULTY_GUIDE.md)**.
+
+---
+
+## 🏗️ Architecture
 
 ```
-Frontend (React + Vite)  →  FastAPI Backend  →  Supabase (Postgres)  →  Docker Judge
+Student Browser (React 19 + Monaco) → Spring Boot 3 (Port 8000) → Supabase PostgreSQL → Docker Judge Sandbox
 ```
 
 | Layer | Technology |
-|-------|-----------|
-| Frontend | React 19 + Vite + Tailwind CSS v4 + Monaco Editor |
-| Backend | FastAPI (Python 3.11), async SQLAlchemy |
-| Database | **Supabase (Postgres)** — the only database |
-| Auth | JWT (signed, HS256) + bcrypt |
-| Code Execution | **Local Docker judge** — one isolated container per test case |
+|---|---|
+| **Frontend** | React 19, Tailwind CSS, Monaco Code Editor, Web Audio API |
+| **Backend** | Java 17, Spring Boot 3, Spring Data JPA, Spring Security (JWT) |
+| **Database** | Supabase PostgreSQL (pgBouncer Transaction Pooler on port 6543) |
+| **Code Execution** | Isolated Docker Judge Sandboxes (`--network none`, CPU/RAM limits) |
+| **Proctoring** | Fullscreen lockdown, 2-strike tab limits, anti-copy, live webcam & acoustic noise monitor |
 
-Rules that hold everywhere:
+---
 
-- **No SQLite.** Production code has zero SQLite. The integration test suite
-  uses a throwaway SQLite file purely as test infrastructure.
-- **No mixed storage.** The frontend never touches Supabase directly; every
-  request goes through FastAPI. `supabase_schema.sql` grants nothing to `anon`.
-- **No execution in the API.** The backend never compiles or runs student code;
-  the Docker judge does, in `--network none` containers with memory/CPU/pid
-  limits. `JUDGE_ENGINE=local` exists only for the dev/test suite.
-- **No fallbacks, no fake data.** Grading reads test cases from the database
-  only. There are no hardcoded questions, virtual questions, or demo rows in
-  runtime code.
+## 🚀 Quick Start with Docker (Recommended)
 
-## 📋 Prerequisites
-
-- **Python** 3.11+
-- **Node.js** 18+
-- **Docker** (for the judge: `python:3.11-slim`, `eclipse-temurin:17-jdk-alpine`, `gcc:13`)
-- **A Supabase project** (or any Postgres 15+)
-
-## 🚀 Quick Start
-
-### 1. Database (Supabase)
-
-1. Create a Supabase project.
-2. Open the SQL editor and run **`supabase_schema.sql`** (creates all tables,
-   constraints, and RLS restricted to `service_role`).
-3. Grab the **connection string** (Settings → Database) for `DATABASE_URL`.
-
-### 2. Backend Setup
-
-```bash
-cd backend
-python -m venv venv
-# Windows:  venv\Scripts\activate   |   Linux/Mac:  source venv/bin/activate
-pip install -r requirements.txt
-```
+1. Pre-pull compiler images:
+   ```bash
+   docker pull python:3.11-slim
+   docker pull eclipse-temurin:17-jdk-alpine
+   docker pull gcc:13
+   ```
+2. Create judge volume:
+   ```bash
+   docker volume create codearena-workdir
+   ```
+3. Build and run server:
+   ```powershell
+   docker build -t codearena-backend -f backend/Dockerfile .
+   docker run -d --name codearena-api -p 8000:8000 -v //var/run/docker.sock:/var/run/docker.sock -v codearena-workdir:/judge-workdir codearena-backend
+   ```
 
 Create `backend/.env`:
 
