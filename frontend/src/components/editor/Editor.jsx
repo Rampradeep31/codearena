@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import MonacoEditor from '@monaco-editor/react';
+import toast from 'react-hot-toast';
 import EditorToolbar from './EditorToolbar';
 import EditorStatusBar from './EditorStatusBar';
 import {
@@ -129,6 +130,20 @@ export default function CodeEditor({
         line: e.position.lineNumber,
         column: e.position.column,
       });
+    });
+
+    // Intercept copy/paste/cut inside Monaco
+    editor.onKeyDown((e) => {
+      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+      if (isCmdOrCtrl && (e.keyCode === monaco.KeyCode.KeyC || e.keyCode === monaco.KeyCode.KeyV || e.keyCode === monaco.KeyCode.KeyX)) {
+        e.preventDefault();
+        e.stopPropagation();
+        toast.error('Copy/Paste/Cut is disabled during the examination.');
+      }
+      if (e.keyCode === monaco.KeyCode.F12 || e.code === 'PrintScreen') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     });
 
     // Keyboard Shortcuts (Requirement 9)

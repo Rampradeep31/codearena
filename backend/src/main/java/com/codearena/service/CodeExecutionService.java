@@ -247,11 +247,11 @@ public class CodeExecutionService {
                                                 r.passed(),
                                                 r.isHidden() ? "[Hidden]" : r.input(),
                                                 r.isHidden() ? "[Hidden]" : r.expectedOutput(),
-                                                r.actualOutput(),
+                                                r.isHidden() ? "[Hidden]" : r.actualOutput(),
                                                 r.executionTime(),
                                                 r.memoryUsed(),
                                                 r.status(),
-                                                r.error()))
+                                                r.isHidden() ? null : r.error()))
                         .toList();
 
         return new CodeSubmitResponse(score, question.getMarks(), passedCount, totalCount, statusStr, submitResults);

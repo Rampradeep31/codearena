@@ -42,6 +42,14 @@ RUN mvn -B -q -DskipTests package
 # ------------------------------------------------------------------------------
 FROM eclipse-temurin:17-jre-jammy
 
+# Install Docker CLI (static binary) so DockerExecutionService can spawn judge containers
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz \
+      | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
+    chmod +x /usr/local/bin/docker && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY --from=backend-build /build/target/codearena-backend-*.jar app.jar

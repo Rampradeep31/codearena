@@ -1,5 +1,11 @@
 server:
   port: ${PORT:8000}
+  ssl:
+    enabled: ${SSL_ENABLED:true}
+    key-store: ${SSL_KEYSTORE:classpath:keystore.p12}
+    key-store-password: ${SSL_KEYSTORE_PASSWORD:codearenasecure}
+    key-store-type: ${SSL_KEYSTORE_TYPE:PKCS12}
+    key-alias: ${SSL_KEY_ALIAS:codearena}
 
 spring:
   application:
@@ -7,10 +13,10 @@ spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/postgres}
     username: ${DATABASE_USERNAME:postgres}
-    password: ${DATABASE_PASSWORD:}
+    password: ${DATABASE_PASSWORD:postgres}
     hikari:
-      maximum-pool-size: 20
-      minimum-idle: 5
+      maximum-pool-size: 30
+      minimum-idle: 10
       connection-timeout: 30000
       max-lifetime: 3600000
       connection-test-query: SELECT 1
@@ -18,8 +24,10 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
           batch_size: 25
         query:

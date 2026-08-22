@@ -50,6 +50,8 @@ export default function ExamInterface() {
   const [submittingCode, setSubmittingCode] = useState(false);
   const [submittingTest, setSubmittingTest] = useState(false);
   const [showFinishModal, setShowFinishModal] = useState(false);
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [warningModalText, setWarningModalText] = useState('');
   const [violationCount, setViolationCount] = useState(0);
   const [warningMsg, setWarningMsg] = useState('');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -231,12 +233,60 @@ export default function ExamInterface() {
     }
   }, [attempt]);
 
-  // ─── Violation Monitoring ─────────────────────
+  // ─── Violation Monitoring & 2-Strike Enforcement ─────────
+  const handleProctoringViolation = async (type) => {
+    const now = Date.now();
+    if (now - violationDebounce.current < 800) return;
+    violationDebounce.current = now;
+
+    // Immediately save code draft
+    saveCode();
+
+    const prevCount = violationCountRef.current;
+    const newCount = prevCount + 1;
+    violationCountRef.current = newCount;
+    setViolationCount(newCount);
+
+    try {
+      await studentAPI.recordViolation(attemptId, { violation_type: type });
+    } catch (err) {
+      console.error("Failed to record violation:", err);
+    }
+
+    if (newCount >= 2) {
+      // 2nd violation: Terminate and submit exam immediately
+      if (autoSubmittedRef.current) return;
+      autoSubmittedRef.current = true;
+
+      toast.error('Exam terminated: Maximum allowed violations (2/2) exceeded. Your exam has been submitted.', {
+        id: 'exam-terminated-toast',
+        duration: 8000
+      });
+
+      try {
+        await studentAPI.finishTest(attemptId);
+      } catch (err) {
+        console.error("Failed to force submit attempt:", err);
+      }
+      navigate(`/student/exam/${attemptId}/complete`, { replace: true });
+    } else {
+      // 1st violation: Show prominent warning modal & banner
+      const typeLabel = type.replace(/_/g, ' ');
+      setWarningModalText(`You performed an unauthorized action: ${typeLabel}. This is your FINAL WARNING (1 of 2). If you switch tabs, leave fullscreen, take screenshots, or violate rules one more time, your exam will be TERMINATED immediately.`);
+      setShowWarningModal(true);
+      setWarningMsg(`WARNING (1/2): Proctoring violation detected (${typeLabel}). The next violation will terminate your test!`);
+      toast.error(`Warning (1/2): Left exam screen. Next violation will terminate your test!`, {
+        id: 'violation-warning-toast',
+        duration: 6000
+      });
+    }
+  };
+
   useEffect(() => {
     const handleVisibility = () => {
       if (Date.now() - mountTime.current < 2000) return;
       if (document.hidden) {
-        recordViolation('tab_switch');
+        handleProctoringViolation('tab_switch');
       }
     };
 
@@ -247,16 +297,58 @@ export default function ExamInterface() {
       if (currentlyFullscreen) {
         hasEnteredFullscreen.current = true;
       } else if (hasEnteredFullscreen.current && Date.now() - mountTime.current > 2000) {
-        recordViolation('fullscreen_exit');
+        handleProctoringViolation('fullscreen_exit');
       }
+    };
+
+    const handleCopyPasteCut = (e) => {
+      e.preventDefault();
+      toast.error('Copy/Paste/Cut is strictly disabled during the exam.', { id: 'no-copy-paste' });
+    };
+
+    const handleKeyDown = (e) => {
+      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+      // Block Ctrl+C, Ctrl+V, Ctrl+X and Cmd equivalents
+      if (isCmdOrCtrl && (e.key === 'c' || e.key === 'v' || e.key === 'x' || e.key === 'C' || e.key === 'V' || e.key === 'X')) {
+        e.preventDefault();
+        toast.error('Copy/Paste keyboard shortcuts are disabled.', { id: 'no-shortcut' });
+      }
+      // Block PrintScreen key / screenshot
+      if (e.key === 'PrintScreen' || e.keyCode === 44) {
+        e.preventDefault();
+        toast.error('Screenshots are prohibited during the exam.', { id: 'no-screenshot' });
+        handleProctoringViolation('screenshot_attempt');
+      }
+    };
+
+    const handleContextMenu = (e) => {
+      e.preventDefault();
+      toast.error('Right-click is disabled during the exam.', { id: 'no-contextmenu' });
+    };
+
+    const handleWindowBlur = () => {
+      if (Date.now() - mountTime.current < 2000) return;
+      handleProctoringViolation('window_blur');
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('copy', handleCopyPasteCut);
+    document.addEventListener('cut', handleCopyPasteCut);
+    document.addEventListener('paste', handleCopyPasteCut);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('blur', handleWindowBlur);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('copy', handleCopyPasteCut);
+      document.removeEventListener('cut', handleCopyPasteCut);
+      document.removeEventListener('paste', handleCopyPasteCut);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('blur', handleWindowBlur);
     };
   }, [attemptId]);
 
@@ -271,7 +363,6 @@ export default function ExamInterface() {
 
   const recordViolation = async (type) => {
     const now = Date.now();
-    // 800ms debounce to prevent duplicate triggers from simultaneous blur + visibility events
     if (now - violationDebounce.current < 800) return;
     violationDebounce.current = now;
 
@@ -297,21 +388,18 @@ export default function ExamInterface() {
 
       const maxViolations = data.max_violations || attempt?.max_violations || 3;
 
-      toast.error(`Violation recorded (${newCount}/${maxViolations}): Left exam screen`, {
+      toast.error(`Proctoring Warning (${newCount}/${maxViolations})`, {
         id: 'violation-toast'
       });
 
-      // Violations are recorded as warnings only. They must NEVER complete the
-      // exam: COMPLETED happens solely via the submit button or the attempt
-      // timer expiring.
-      setWarningMsg(`Warning ${newCount} of ${maxViolations}: You left the examination screen. This activity has been recorded.`);
+      setWarningMsg(`Warning ${newCount} of ${maxViolations}: Proctoring notice. Keep your face centered and stay focused.`);
     } catch (err) {
       console.error("Violation recording failed:", err);
       const newCount = prevCount + 1;
       violationCountRef.current = newCount;
       setViolationCount(newCount);
       const maxViolations = attempt?.max_violations || 3;
-      setWarningMsg(`Warning ${newCount} of ${maxViolations}: You left the examination screen.`);
+      setWarningMsg(`Warning ${newCount} of ${maxViolations}: Proctoring notice.`);
     }
   };
 
@@ -321,6 +409,10 @@ export default function ExamInterface() {
 
   const handleMultipleFaces = () => {
     setWarningMsg('Proctoring Notice: Multiple faces detected in camera view. Please ensure you are taking the test alone.');
+  };
+
+  const handleAudioNoise = () => {
+    setWarningMsg('Proctoring Notice: Voice/Noise detected in room. Please maintain complete silence.');
   };
 
   const requestFullscreen = async () => {
@@ -573,25 +665,66 @@ export default function ExamInterface() {
       {!isFullscreen && (
         <div className="fixed inset-0 bg-dark-950/95 flex items-center justify-center p-4 z-[9999] animate-fade-in no-select backdrop-blur-md">
           <div className="bg-dark-900 border border-dark-700/50 rounded-2xl p-8 max-w-md w-full text-center shadow-2xl">
-            <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/20">
-              <HiOutlineShieldExclamation className="w-9 h-9 text-red-500 animate-pulse" />
+            <div className="w-16 h-16 bg-brand-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-brand-500/20">
+              <HiOutlineShieldExclamation className="w-9 h-9 text-brand-400 animate-pulse" />
             </div>
-            <h1 className="text-xl font-bold text-white mb-2">Fullscreen Mode Required</h1>
-            <p className="text-sm text-dark-400 mb-6 leading-relaxed">
-              This examination is proctored. To start or continue writing, please click below to enter Fullscreen mode.
+            <h1 className="text-xl font-bold text-white mb-2">Proctored Assessment Gate</h1>
+            <p className="text-xs text-dark-300 mb-5 leading-relaxed">
+              This examination is strictly monitored. To begin, please grant browser permissions and enter fullscreen.
             </p>
+
+            <div className="bg-dark-950/80 border border-dark-800 rounded-xl p-3.5 mb-6 text-left space-y-2 text-xs">
+              <div className="flex items-center gap-2.5 text-dark-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span>🖥️ <strong>Fullscreen Lockdown:</strong> Tab switching terminates test</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-dark-300">
+                <span className="w-2 h-2 rounded-full bg-brand-400"></span>
+                <span>📷 <strong>Webcam Feed:</strong> Head & multi-person tracking</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-dark-300">
+                <span className="w-2 h-2 rounded-full bg-purple-400"></span>
+                <span>🎙️ <strong>Microphone:</strong> Ambient voice & noise detection</span>
+              </div>
+            </div>
+
             <div className="space-y-3">
               <button
                 type="button"
                 onClick={requestFullscreen}
-                className="w-full py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-brand-500/20 cursor-pointer"
+                className="w-full py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-brand-500/20 cursor-pointer flex items-center justify-center gap-2"
               >
-                Enter Fullscreen & Start Exam
+                <span>Enter Fullscreen & Start Exam</span>
               </button>
             </div>
           </div>
         </div>
       )}
+      {/* Proctoring First Warning Modal */}
+      {showWarningModal && (
+        <div className="fixed inset-0 bg-dark-950/95 flex items-center justify-center p-4 z-[9998] animate-fade-in no-select backdrop-blur-md">
+          <div className="bg-dark-900 border border-amber-500/50 rounded-2xl p-8 max-w-md w-full text-center shadow-2xl shadow-amber-500/10">
+            <div className="w-16 h-16 bg-amber-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-amber-500/30">
+              <HiOutlineExclamation className="w-9 h-9 text-amber-500 animate-bounce" />
+            </div>
+            <h1 className="text-xl font-bold text-amber-400 mb-2">Proctoring Warning (1 of 2)</h1>
+            <p className="text-sm text-dark-300 mb-6 leading-relaxed">
+              {warningModalText || 'You left the examination screen. If you switch tabs, leave fullscreen, or violate rules one more time, your test will be permanently terminated!'}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowWarningModal(false);
+                requestFullscreen();
+              }}
+              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-dark-950 font-bold rounded-xl text-sm transition-all shadow-lg shadow-amber-500/20 cursor-pointer"
+            >
+              I Understand — Return to Exam
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Warning Banner */}
       {warningMsg && (
         <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between">
@@ -1059,8 +1192,13 @@ export default function ExamInterface() {
         </div>
       )}
 
-      {/* Floating Webcam Proctoring Widget */}
-      <WebcamProctor snapshotIntervalSec={30} onFaceTurn={handleFaceTurn} onMultipleFaces={handleMultipleFaces} />
+      {/* Floating Webcam & Audio Proctoring Widget */}
+      <WebcamProctor
+        snapshotIntervalSec={30}
+        onFaceTurn={handleFaceTurn}
+        onMultipleFaces={handleMultipleFaces}
+        onAudioNoise={handleAudioNoise}
+      />
     </div>
   );
 }

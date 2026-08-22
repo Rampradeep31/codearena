@@ -42,6 +42,26 @@ public class DockerExecutionService implements ExecutionService {
                     "c", new LanguageProfile("main.c", "gcc main.c -o main -O2", "./main"),
                     "cpp", new LanguageProfile("main.cpp", "g++ main.cpp -o main -O2", "./main"));
 
+    /**
+     * When the backend itself runs inside Docker, volume mounts use HOST paths.
+     * Set JUDGE_WORKDIR_HOST to the host path that maps to the container's
+     * /judge-workdir (e.g. the named volume's host path, or a bind-mounted dir).
+     * If unset, falls back to /tmp (works for native / non-containerised runs).
+     */
+    private static final String JUDGE_BASE_DIR;
+    private static final String HOST_WORKDIR_BASE;
+
+    static {
+        String hostBase = System.getenv("JUDGE_WORKDIR_HOST");
+        if (hostBase != null && !hostBase.isBlank()) {
+            HOST_WORKDIR_BASE = hostBase.stripTrailing().replaceAll("[/\\\\]+$", "");
+            JUDGE_BASE_DIR = "/judge-workdir";
+        } else {
+            HOST_WORKDIR_BASE = null;
+            JUDGE_BASE_DIR = System.getProperty("java.io.tmpdir", "/tmp");
+        }
+    }
+
     private final AppProperties properties;
     private final OutputComparator comparator;
     private final Semaphore semaphore;
@@ -134,12 +154,26 @@ public class DockerExecutionService implements ExecutionService {
 
         Path workdir = null;
         try {
-            workdir = Files.createTempDirectory("codearena-judge-");
+            // Create temp dir inside the container's judge working directory
+            Path judgeBase = java.nio.file.Paths.get(JUDGE_BASE_DIR);
+            Files.createDirectories(judgeBase);
+            workdir = Files.createTempDirectory(judgeBase, "job-");
             double timeout = properties.getJudge().getCodeTimeoutSeconds();
 
             Files.writeString(workdir.resolve(profile.sourceFile()), sourceCode == null ? "" : sourceCode);
             Files.writeString(workdir.resolve("input.txt"), stdin == null ? "" : stdin);
             Files.writeString(workdir.resolve("run.sh"), buildRunScript(profile, timeout), StandardOpenOption.CREATE);
+            // make run.sh executable inside the judge container
+            workdir.resolve("run.sh").toFile().setExecutable(true, false);
+
+            // Resolve the host-side path for the -v mount
+            String hostWorkdir;
+            if (HOST_WORKDIR_BASE != null) {
+                // e.g. /var/lib/docker/volumes/codearena-workdir/_data/job-XXXXX
+                hostWorkdir = HOST_WORKDIR_BASE + "/" + workdir.getFileName().toString();
+            } else {
+                hostWorkdir = workdir.toAbsolutePath().toString();
+            }
 
             int memMb = Math.max(64, properties.getJudge().getCodeMemoryLimitKb() / 1024);
             List<String> command =
@@ -158,7 +192,7 @@ public class DockerExecutionService implements ExecutionService {
                             "--ulimit",
                             "nofile=256:256",
                             "-v",
-                            workdir.toAbsolutePath() + ":/work",
+                            hostWorkdir + ":/work",
                             "-w",
                             "/work",
                             "--entrypoint",

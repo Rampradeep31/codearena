@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   HiOutlineVideoCamera,
+  HiOutlineMicrophone,
   HiOutlineShieldCheck,
   HiOutlineExclamationCircle,
   HiOutlineChevronDown,
@@ -8,16 +9,18 @@ import {
   HiOutlineRefresh,
   HiOutlineLockClosed,
   HiOutlineUserGroup,
-  HiOutlineEyeOff
+  HiOutlineEyeOff,
+  HiOutlineVolumeUp
 } from 'react-icons/hi';
 
 /**
- * Advanced WebcamProctor Component
+ * Advanced Webcam & Microphone Proctor Component
  *
- * Provides real-time AI & Canvas visual proctoring:
+ * Provides real-time AI & Canvas visual & acoustic proctoring:
  * - Head turn / Profile view detection (Yaw rotation > 25°)
  * - Multiple persons detection (2+ faces in frame)
  * - Face presence tracking (No face / seat departure)
+ * - Microphone noise & voice activity analysis (Web Audio API)
  * - Floating Picture-in-Picture live preview
  * - Periodic Base64 snapshot capture for server audit
  */
@@ -26,6 +29,7 @@ export default function WebcamProctor({
   onStatusChange = null,
   onFaceTurn = null,
   onMultipleFaces = null,
+  onAudioNoise = null,
   snapshotIntervalSec = 30,
   required = true,
   className = ''
@@ -38,38 +42,79 @@ export default function WebcamProctor({
 
   // Real-time proctoring status: 'centered' | 'turned_away' | 'multiple_faces' | 'no_face'
   const [proctorStatus, setProctorStatus] = useState('centered');
+  const [audioLevel, setAudioLevel] = useState(0); // 0 - 100
+  const [audioDetected, setAudioDetected] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const mediaStreamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const audioDataRef = useRef(null);
   const snapshotTimerRef = useRef(null);
   const analysisTimerRef = useRef(null);
+  const audioTimerRef = useRef(null);
 
   // Consecutive counters for debouncing alerts
   const turnCounterRef = useRef(0);
   const multiCounterRef = useRef(0);
   const noFaceCounterRef = useRef(0);
+  const noiseCounterRef = useRef(0);
 
-  // Initialize camera stream
+  // Multi-tier media stream resolver
+  const getMediaStream = async () => {
+    // 1. Modern standard API (mediaDevices.getUserMedia)
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 20 } },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+      } catch (err) {
+        console.warn('Audio+Video request failed, falling back to video only:', err);
+        return await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 20 } },
+          audio: false
+        });
+      }
+    }
+
+    // 2. Legacy browser fallback methods (webkitGetUserMedia, mozGetUserMedia)
+    const legacyGetUserMedia =
+      navigator.getUserMedia ||
+      navigator.webkitGetUserMedia ||
+      navigator.mozGetUserMedia ||
+      navigator.msGetUserMedia;
+
+    if (legacyGetUserMedia) {
+      return new Promise((resolve, reject) => {
+        legacyGetUserMedia.call(
+          navigator,
+          { video: true, audio: false },
+          (stream) => resolve(stream),
+          (err) => reject(err)
+        );
+      });
+    }
+
+    // 3. Helpful diagnostic if on HTTP LAN IP (non-localhost)
+    if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      throw new Error(
+        `Camera restricted on HTTP (${window.location.hostname}). Open chrome://flags/#unsafely-treat-insecure-origin-as-secure, add http://${window.location.host}, and relaunch.`
+      );
+    }
+
+    throw new Error('Camera access is not supported by your browser.');
+  };
+
+  // Initialize camera and microphone stream
   const startCamera = useCallback(async () => {
     setStreamState('initializing');
     setErrorMsg('');
 
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Webcam access is not supported by your browser.');
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { max: 20 }
-        },
-        audio: false
-      });
-
+      const stream = await getMediaStream();
       mediaStreamRef.current = stream;
 
       if (videoRef.current) {
@@ -77,17 +122,38 @@ export default function WebcamProctor({
         await videoRef.current.play().catch(() => {});
       }
 
+      // Initialize Web Audio API for noise / voice activity detection
+      try {
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks && audioTracks.length > 0) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) {
+            const audioCtx = new AudioContextClass();
+            audioContextRef.current = audioCtx;
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.5;
+            source.connect(analyser);
+            analyserRef.current = analyser;
+            audioDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+          }
+        }
+      } catch (audioErr) {
+        console.warn('Web Audio API initialization skipped:', audioErr);
+      }
+
       setStreamState('active');
       if (onStatusChange) onStatusChange('active');
     } catch (err) {
-      console.error('Webcam proctor error:', err);
-      let message = 'Failed to access camera.';
+      console.error('Camera/Microphone proctor error:', err);
+      let message = 'Failed to access camera/microphone.';
 
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        message = 'Camera permission was denied. Please allow camera access to proceed.';
+        message = 'Camera & Microphone permission was denied. Please allow device access in your browser to proceed.';
         setStreamState('denied');
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        message = 'No camera device found on your system.';
+        message = 'No camera or microphone device found on your system.';
         setStreamState('error');
       } else {
         message = err.message || 'Camera failed to initialize.';
@@ -99,16 +165,60 @@ export default function WebcamProctor({
     }
   }, [onStatusChange]);
 
-  // Stop camera stream
+  // Stop camera and microphone stream
   const stopCamera = useCallback(() => {
     if (snapshotTimerRef.current) clearInterval(snapshotTimerRef.current);
     if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
+    if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+    }
 
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
     }
   }, []);
+
+  // Monitor audio volume level
+  useEffect(() => {
+    if (streamState === 'active') {
+      audioTimerRef.current = setInterval(() => {
+        if (!analyserRef.current || !audioDataRef.current) return;
+        analyserRef.current.getByteFrequencyData(audioDataRef.current);
+
+        let sum = 0;
+        for (let i = 0; i < audioDataRef.current.length; i++) {
+          sum += audioDataRef.current[i];
+        }
+        const avg = sum / audioDataRef.current.length;
+        const normalized = Math.min(100, Math.round((avg / 128) * 100));
+        setAudioLevel(normalized);
+
+        // Voice / Noise threshold
+        if (normalized > 35) {
+          noiseCounterRef.current++;
+          if (noiseCounterRef.current >= 3) {
+            setAudioDetected(true);
+            if (onAudioNoise) onAudioNoise();
+          }
+        } else {
+          noiseCounterRef.current = 0;
+          setAudioDetected(false);
+        }
+      }, 250);
+    } else if (audioTimerRef.current) {
+      clearInterval(audioTimerRef.current);
+    }
+
+    return () => {
+      if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+    };
+  }, [streamState, onAudioNoise]);
 
   // Capture frame snapshot
   const captureSnapshot = useCallback(() => {
@@ -422,12 +532,34 @@ export default function WebcamProctor({
               </button>
             )}
 
+            {/* Microphone & Acoustic Monitoring Bar */}
+            {streamState === 'active' && (
+              <div className="mt-2.5 bg-dark-950/60 rounded-lg p-2 border border-dark-700/60 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-[70px]">
+                  <HiOutlineMicrophone className={`w-3.5 h-3.5 ${audioDetected ? 'text-red-400 animate-bounce' : 'text-brand-400'}`} />
+                  <span className="text-[10px] text-dark-300 font-medium">{audioDetected ? 'Noise Alert' : 'Mic Active'}</span>
+                </div>
+
+                {/* Live VU Audio Level Meter */}
+                <div className="flex-1 h-1.5 bg-dark-800 rounded-full overflow-hidden flex items-center">
+                  <div
+                    className={`h-full transition-all duration-150 rounded-full ${
+                      audioLevel > 50 ? 'bg-red-500' : audioLevel > 25 ? 'bg-amber-400' : 'bg-emerald-400'
+                    }`}
+                    style={{ width: `${Math.max(4, audioLevel)}%` }}
+                  />
+                </div>
+
+                <span className="text-[10px] font-mono text-dark-400 min-w-[28px] text-right">{audioLevel}%</span>
+              </div>
+            )}
+
             {/* Footer Proctor Status Indicator */}
             {streamState === 'active' && (
               <div className="mt-2 flex items-center justify-between text-[11px] px-0.5">
                 <span className="flex items-center gap-1 text-dark-400">
                   <HiOutlineShieldCheck className="w-3.5 h-3.5 text-brand-400" />
-                  Monitoring Active
+                  Visual & Audio Proctored
                 </span>
 
                 <span className={`font-semibold flex items-center gap-1 ${

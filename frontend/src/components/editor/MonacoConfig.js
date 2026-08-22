@@ -40,7 +40,7 @@ export const getMonacoOptions = ({ fontSize = 14, readOnly = false, minimap = fa
   formatOnPaste: true,
   formatOnType: true,
   selectionHighlight: true,
-  contextmenu: true,
+  contextmenu: false,
   mouseWheelZoom: true,
   padding: { top: 12, bottom: 12 },
   fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, Monaco, monospace",

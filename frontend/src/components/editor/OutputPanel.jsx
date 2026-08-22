@@ -147,34 +147,48 @@ export default function OutputPanel({ result, running, onCollapse, isCollapsed }
                     </div>
                   </div>
 
-                  {tc.input && (
-                    <div className="mb-2">
-                      <span className="text-slate-400 text-[11px] font-semibold block mb-0.5">Input:</span>
-                      <pre className="bg-slate-950 p-2 rounded text-slate-200 font-mono text-xs overflow-x-auto border border-slate-800">
-                        {tc.input}
-                      </pre>
+                  {tc.input === '[Hidden]' ? (
+                    <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3 flex items-center justify-between text-slate-400 text-xs">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-slate-500 font-mono text-sm">🔒</span>
+                        <span>Hidden Test Case (Input & output details are confidential)</span>
+                      </div>
+                      <span className={`font-semibold px-2.5 py-0.5 rounded text-[11px] ${tc.passed ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40' : 'bg-rose-950/60 text-rose-400 border border-rose-800/40'}`}>
+                        {tc.status ? tc.status.toUpperCase() : (tc.passed ? 'PASSED' : 'FAILED')}
+                      </span>
                     </div>
+                  ) : (
+                    <>
+                      {tc.input && (
+                        <div className="mb-2">
+                          <span className="text-slate-400 text-[11px] font-semibold block mb-0.5">Input:</span>
+                          <pre className="bg-slate-950 p-2 rounded text-slate-200 font-mono text-xs overflow-x-auto border border-slate-800">
+                            {tc.input}
+                          </pre>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-slate-400 text-[11px] font-semibold block mb-0.5">Expected Output:</span>
+                          <pre className="bg-slate-950 p-2 rounded text-emerald-400 font-mono text-xs overflow-x-auto border border-slate-800">
+                            {tc.expected_output || '(Empty)'}
+                          </pre>
+                        </div>
+
+                        <div>
+                          <span className="text-slate-400 text-[11px] font-semibold block mb-0.5">Actual Output:</span>
+                          <pre
+                            className={`bg-slate-950 p-2 rounded font-mono text-xs overflow-x-auto border border-slate-800 ${
+                              tc.passed ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {tc.error ? tc.error : (tc.actual_output || '(Empty)')}
+                          </pre>
+                        </div>
+                      </div>
+                    </>
                   )}
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <div>
-                      <span className="text-slate-400 text-[11px] font-semibold block mb-0.5">Expected Output:</span>
-                      <pre className="bg-slate-950 p-2 rounded text-emerald-400 font-mono text-xs overflow-x-auto border border-slate-800">
-                        {tc.expected_output || '(Empty)'}
-                      </pre>
-                    </div>
-
-                    <div>
-                      <span className="text-slate-400 text-[11px] font-semibold block mb-0.5">Actual Output:</span>
-                      <pre
-                        className={`bg-slate-950 p-2 rounded font-mono text-xs overflow-x-auto border border-slate-800 ${
-                          tc.passed ? 'text-emerald-400' : 'text-rose-400'
-                        }`}
-                      >
-                        {tc.error ? tc.error : (tc.actual_output || '(Empty)')}
-                      </pre>
-                    </div>
-                  </div>
                 </div>
               ))}
             </div>
