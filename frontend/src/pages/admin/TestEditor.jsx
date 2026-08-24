@@ -284,13 +284,12 @@ export default function TestEditor() {
               <label className={labelClass}>Questions Per Student</label>
               <select 
                 value={form.questions_per_student} 
-                onChange={(e) => setField('questions_per_student', parseInt(e.target.value))} 
+                onChange={(e) => setField('questions_per_student', parseInt(e.target.value) || 1)} 
                 className={inputClass + " cursor-pointer"}
               >
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={15}>15</option>
-                <option value={20}>20</option>
+                {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
               </select>
             </div>
 
