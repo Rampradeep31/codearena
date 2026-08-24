@@ -137,8 +137,10 @@ export default function TestEditor() {
 
     setSaving(true);
     try {
+      const allBankQuestionIds = filteredQuestions.map(q => q.id);
       const data = {
         ...form,
+        question_ids: form.randomize_questions ? allBankQuestionIds : form.question_ids,
         start_time: startIso,
         end_time: endIso,
       };
@@ -199,6 +201,11 @@ export default function TestEditor() {
   const inputClass = "w-full px-3 py-2 bg-dark-800 border border-dark-600/50 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500 transition-colors";
   const labelClass = "block text-xs font-medium text-dark-400 mb-1";
   const diffColors = { easy: 'text-emerald-500', medium: 'text-amber-500', hard: 'text-red-500' };
+  const difficultyBadgeColors = { 
+    easy: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', 
+    medium: 'bg-amber-500/10 text-amber-400 border-amber-500/20', 
+    hard: 'bg-red-500/10 text-red-400 border-red-500/20' 
+  };
 
   // Filter banks by year only: a bank's lifecycle status ("Active") reflects
   // currently open exams and must not block scheduling a new exam with it.
@@ -470,14 +477,16 @@ export default function TestEditor() {
                 No questions found in this Question Bank. Add questions to this bank first.
               </div>
             ) : form.randomize_questions ? (
-              <div className="bg-dark-900/30 border border-dark-700/30 rounded-lg p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-dark-900/30 border border-dark-700/30 rounded-lg p-4 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto">
                 {filteredQuestions.map(q => (
                   <div key={q.id} className="flex items-center justify-between p-2.5 bg-dark-800/40 rounded border border-dark-750">
-                    <div className="min-w-0">
+                    <div className="min-w-0 pr-2">
                       <p className="text-sm text-white font-medium truncate">{q.title}</p>
-                      <p className="text-xs text-dark-500">{q.topic}</p>
+                      <p className="text-xs text-dark-500">{q.topic} · {q.marks} marks</p>
                     </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${difficultyColors[q.difficulty]}`}>{q.difficulty}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border capitalize shrink-0 ${difficultyBadgeColors[q.difficulty] || 'text-dark-400'}`}>
+                      {q.difficulty}
+                    </span>
                   </div>
                 ))}
               </div>
