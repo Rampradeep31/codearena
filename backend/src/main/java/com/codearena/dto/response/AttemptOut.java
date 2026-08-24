@@ -1,6 +1,7 @@
 package com.codearena.dto.response;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public record AttemptOut(
         Long id,
@@ -14,4 +15,7 @@ public record AttemptOut(
         String submissionReason,
         Double totalScore,
         Double totalPossible,
-        Integer maxViolations) {}
+        Integer maxViolations,
+        Boolean allowCopyPaste,
+        List<String> allowedLanguages) {}
+

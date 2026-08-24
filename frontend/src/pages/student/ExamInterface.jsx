@@ -45,7 +45,8 @@ export default function ExamInterface() {
   const [runResult, setRunResult] = useState(null);
   const [activeCaseIdx, setActiveCaseIdx] = useState(0);
   const [customInput, setCustomInput] = useState('');
-  const [resultTab, setResultTab] = useState('result');
+  const [resultTab, setResultTab] = useState('testcase');
+  const [isTestPanelCollapsed, setIsTestPanelCollapsed] = useState(false);
   const [running, setRunning] = useState(false);
   const [submittingCode, setSubmittingCode] = useState(false);
   const [submittingTest, setSubmittingTest] = useState(false);
@@ -233,7 +234,7 @@ export default function ExamInterface() {
     }
   }, [attempt]);
 
-  // ─── Violation Monitoring & 2-Strike Enforcement ─────────
+  // ─── Violation Monitoring & Dynamic Admin Enforcement ─────────
   const handleProctoringViolation = async (type) => {
     const now = Date.now();
     if (now - violationDebounce.current < 800) return;
@@ -247,18 +248,23 @@ export default function ExamInterface() {
     violationCountRef.current = newCount;
     setViolationCount(newCount);
 
+    let maxAllowed = attempt?.max_violations || 3;
+
     try {
-      await studentAPI.recordViolation(attemptId, { violation_type: type });
+      const res = await studentAPI.recordViolation(attemptId, { violation_type: type });
+      if (res?.data?.max_violations) {
+        maxAllowed = res.data.max_violations;
+      }
     } catch (err) {
       console.error("Failed to record violation:", err);
     }
 
-    if (newCount >= 2) {
-      // 2nd violation: Terminate and submit exam immediately
+    if (newCount >= maxAllowed) {
+      // Max violations reached: Terminate and submit exam immediately
       if (autoSubmittedRef.current) return;
       autoSubmittedRef.current = true;
 
-      toast.error('Exam terminated: Maximum allowed violations (2/2) exceeded. Your exam has been submitted.', {
+      toast.error(`Exam terminated: Maximum allowed violations (${newCount}/${maxAllowed}) reached as configured by admin. Your exam has been submitted.`, {
         id: 'exam-terminated-toast',
         duration: 8000
       });
@@ -270,12 +276,13 @@ export default function ExamInterface() {
       }
       navigate(`/student/exam/${attemptId}/complete`, { replace: true });
     } else {
-      // 1st violation: Show prominent warning modal & banner
+      // Warning modal & banner
       const typeLabel = type.replace(/_/g, ' ');
-      setWarningModalText(`You performed an unauthorized action: ${typeLabel}. This is your FINAL WARNING (1 of 2). If you switch tabs, leave fullscreen, take screenshots, or violate rules one more time, your exam will be TERMINATED immediately.`);
+      const remaining = maxAllowed - newCount;
+      setWarningModalText(`You performed an unauthorized action: ${typeLabel}. This is Warning (${newCount} of ${maxAllowed}). You have ${remaining} warning${remaining > 1 ? 's' : ''} remaining. If you reach ${maxAllowed} violations, your exam will be TERMINATED immediately.`);
       setShowWarningModal(true);
-      setWarningMsg(`WARNING (1/2): Proctoring violation detected (${typeLabel}). The next violation will terminate your test!`);
-      toast.error(`Warning (1/2): Left exam screen. Next violation will terminate your test!`, {
+      setWarningMsg(`WARNING (${newCount}/${maxAllowed}): Proctoring violation detected (${typeLabel}). ${remaining} warning(s) left before test termination!`);
+      toast.error(`Warning (${newCount}/${maxAllowed}): Proctoring violation. Reaching ${maxAllowed} will terminate your test!`, {
         id: 'violation-warning-toast',
         duration: 6000
       });
@@ -283,6 +290,8 @@ export default function ExamInterface() {
   };
 
   useEffect(() => {
+    const allowCopyPaste = !!(attempt?.allow_copy_paste);
+
     const handleVisibility = () => {
       if (Date.now() - mountTime.current < 2000) return;
       if (document.hidden) {
@@ -302,16 +311,17 @@ export default function ExamInterface() {
     };
 
     const handleCopyPasteCut = (e) => {
+      if (allowCopyPaste) return;
       e.preventDefault();
-      toast.error('Copy/Paste/Cut is strictly disabled during the exam.', { id: 'no-copy-paste' });
+      toast.error('Copy/Paste/Cut is disabled for this test as per admin policy.', { id: 'no-copy-paste' });
     };
 
     const handleKeyDown = (e) => {
       const isCmdOrCtrl = e.ctrlKey || e.metaKey;
-      // Block Ctrl+C, Ctrl+V, Ctrl+X and Cmd equivalents
-      if (isCmdOrCtrl && (e.key === 'c' || e.key === 'v' || e.key === 'x' || e.key === 'C' || e.key === 'V' || e.key === 'X')) {
+      // Block Ctrl+C, Ctrl+V, Ctrl+X and Cmd equivalents only when disallowed
+      if (!allowCopyPaste && isCmdOrCtrl && (e.key === 'c' || e.key === 'v' || e.key === 'x' || e.key === 'C' || e.key === 'V' || e.key === 'X')) {
         e.preventDefault();
-        toast.error('Copy/Paste keyboard shortcuts are disabled.', { id: 'no-shortcut' });
+        toast.error('Copy/Paste shortcuts are disabled for this test.', { id: 'no-shortcut' });
       }
       // Block PrintScreen key / screenshot
       if (e.key === 'PrintScreen' || e.keyCode === 44) {
@@ -350,7 +360,7 @@ export default function ExamInterface() {
       document.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [attemptId]);
+  }, [attemptId, attempt]);
 
   // ─── Online/Offline ───────────────────────────
   useEffect(() => {
@@ -676,7 +686,7 @@ export default function ExamInterface() {
             <div className="bg-dark-950/80 border border-dark-800 rounded-xl p-3.5 mb-6 text-left space-y-2 text-xs">
               <div className="flex items-center gap-2.5 text-dark-300">
                 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span>🖥️ <strong>Fullscreen Lockdown:</strong> Tab switching terminates test</span>
+                <span>🖥️ <strong>Fullscreen Lockdown:</strong> Exceeding {attempt?.max_violations || 3} violations terminates test</span>
               </div>
               <div className="flex items-center gap-2.5 text-dark-300">
                 <span className="w-2 h-2 rounded-full bg-brand-400"></span>
@@ -707,7 +717,7 @@ export default function ExamInterface() {
             <div className="w-16 h-16 bg-amber-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-amber-500/30">
               <HiOutlineExclamation className="w-9 h-9 text-amber-500 animate-bounce" />
             </div>
-            <h1 className="text-xl font-bold text-amber-400 mb-2">Proctoring Warning (1 of 2)</h1>
+            <h1 className="text-xl font-bold text-amber-400 mb-2">Proctoring Warning ({violationCount} of {attempt?.max_violations || 3})</h1>
             <p className="text-sm text-dark-300 mb-6 leading-relaxed">
               {warningModalText || 'You left the examination screen. If you switch tabs, leave fullscreen, or violate rules one more time, your test will be permanently terminated!'}
             </p>
@@ -759,9 +769,9 @@ export default function ExamInterface() {
 
         <div className="flex items-center gap-4">
           {/* Violation Count */}
-          <div className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded ${violationCount > 0 ? 'bg-amber-500/10 text-amber-500' : 'text-dark-400'}`}>
+          <div className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded ${violationCount > 0 ? 'bg-amber-500/10 text-amber-500 font-semibold' : 'text-dark-400'}`}>
             <HiOutlineShieldExclamation className="w-3.5 h-3.5" />
-            {violationCount} violation{violationCount !== 1 ? 's' : ''}
+            {violationCount} / {attempt?.max_violations || 3} violation{violationCount !== 1 ? 's' : ''}
           </div>
 
           {/* Timer */}
@@ -862,254 +872,281 @@ export default function ExamInterface() {
           </div>
         </div>
 
-        {/* Right: Monaco Code Editor */}
-        <div className="flex-1 flex flex-col min-h-0 bg-slate-950 p-2">
-          <CodeEditor
-            key={`${attemptId}-${questions[currentIdx]?.question_id || questions[currentIdx]?.id || currentIdx + 1}`}
-            initialCode={code}
-            initialLanguage={language}
-            attemptId={attemptId}
-            questionId={questions[currentIdx]?.question_id || questions[currentIdx]?.id || currentIdx + 1}
-            onCodeChange={(newCode, newLang) => {
-              setCode(newCode);
-              setLanguage(newLang);
-            }}
-            onLanguageChange={(newLang, newCode) => {
-              setLanguage(newLang);
-              setCode(newCode);
-            }}
-            onRun={handleRun}
-            onSubmit={handleSubmit}
-            running={running}
-            submitting={submittingCode}
-            readOnly={attempt?.status === 'submitted' || attempt?.status === 'auto_submitted' || timeLeft <= 0}
-            compilationError={runResult?.compilation_error || runResult?.error}
-          />
-        </div>
-      </div>
+        {/* Right: Monaco Code Editor & Bottom Testcase / Result Panel */}
+        <div className="flex-1 flex flex-col min-h-0 bg-slate-950 p-2 gap-2 overflow-hidden">
+          <div className="flex-1 min-h-[160px] flex flex-col overflow-hidden">
+            <CodeEditor
+              key={`${attemptId}-${questions[currentIdx]?.question_id || questions[currentIdx]?.id || currentIdx + 1}`}
+              initialCode={code}
+              initialLanguage={language}
+              attemptId={attemptId}
+              questionId={questions[currentIdx]?.question_id || questions[currentIdx]?.id || currentIdx + 1}
+              onCodeChange={(newCode, newLang) => {
+                setCode(newCode);
+                setLanguage(newLang);
+              }}
+              onLanguageChange={(newLang, newCode) => {
+                setLanguage(newLang);
+                setCode(newCode);
+              }}
+              onRun={handleRun}
+              onSubmit={handleSubmit}
+              running={running}
+              submitting={submittingCode}
+              readOnly={attempt?.status === 'submitted' || attempt?.status === 'auto_submitted' || timeLeft <= 0}
+              compilationError={runResult?.compilation_error || runResult?.error}
+              allowCopyPaste={attempt?.allow_copy_paste}
+            />
+          </div>
 
-      {/* Floating Pop-Up Modal for Testcase & Test Result Execution Output */}
-      {runResult && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-[9999] animate-fade-in backdrop-blur-sm">
-          <div className="bg-dark-900 border border-dark-700/60 rounded-2xl max-w-xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-scale-up">
-            {/* Modal Header: Tabs & Close */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-dark-700/50 bg-dark-950/80">
-              <div className="flex items-center gap-4">
+          {/* Test Case & Test Result Panel Directly Below Code Editor */}
+          <div className={`bg-dark-900 border border-dark-700/60 rounded-xl flex flex-col shadow-xl transition-all duration-200 overflow-hidden ${
+            isTestPanelCollapsed ? 'h-10 shrink-0' : 'h-64 sm:h-72 shrink-0'
+          }`}>
+            {/* Header: Tabs & Actions */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-dark-700/50 bg-dark-950/90 select-none">
+              <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setResultTab('result')}
-                  className={`flex items-center gap-1.5 py-1 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
-                    resultTab === 'result' ? 'border-brand-500 text-white' : 'border-transparent text-dark-400 hover:text-dark-200'
-                  }`}
-                >
-                  <HiOutlineTerminal className="w-4 h-4 text-brand-400" />
-                  Test Result
-                </button>
-                <button
-                  onClick={() => setResultTab('testcase')}
-                  className={`flex items-center gap-1.5 py-1 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                  type="button"
+                  onClick={() => {
+                    setResultTab('testcase');
+                    if (isTestPanelCollapsed) setIsTestPanelCollapsed(false);
+                  }}
+                  className={`flex items-center gap-1.5 py-0.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
                     resultTab === 'testcase' ? 'border-brand-500 text-white' : 'border-transparent text-dark-400 hover:text-dark-200'
                   }`}
                 >
-                  <HiOutlineCode className="w-4 h-4 text-dark-300" />
+                  <HiOutlineCode className="w-3.5 h-3.5 text-brand-400" />
                   Testcase
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResultTab('result');
+                    if (isTestPanelCollapsed) setIsTestPanelCollapsed(false);
+                  }}
+                  className={`flex items-center gap-1.5 py-0.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                    resultTab === 'result' ? 'border-brand-500 text-white' : 'border-transparent text-dark-400 hover:text-dark-200'
+                  }`}
+                >
+                  <HiOutlineTerminal className="w-3.5 h-3.5 text-emerald-400" />
+                  Test Result {runResult && <span className="w-1.5 h-1.5 rounded-full bg-brand-400"></span>}
+                </button>
               </div>
-              <button
-                onClick={() => setRunResult(null)}
-                className="w-7 h-7 rounded-lg bg-dark-800 hover:bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors cursor-pointer"
-              >
-                <HiOutlineX className="w-4 h-4" />
-              </button>
+
+              <div className="flex items-center gap-2">
+                {runResult && (
+                  <button
+                    type="button"
+                    onClick={() => setRunResult(null)}
+                    className="px-2 py-0.5 rounded text-[11px] font-medium text-dark-400 hover:text-rose-400 hover:bg-dark-800 transition-colors cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsTestPanelCollapsed(prev => !prev)}
+                  className="px-2 py-1 rounded-md text-[11px] font-medium text-dark-400 hover:text-white hover:bg-dark-800 transition-colors flex items-center gap-1 cursor-pointer"
+                  title={isTestPanelCollapsed ? "Expand Testcase Panel" : "Collapse Testcase Panel"}
+                >
+                  <span>{isTestPanelCollapsed ? "Expand" : "Collapse"}</span>
+                  <HiOutlineChevronRight className={`w-3.5 h-3.5 transition-transform ${isTestPanelCollapsed ? '-rotate-90' : 'rotate-90'}`} />
+                </button>
+              </div>
             </div>
 
-            {/* Modal Body: Testcase & Result View */}
-            <div className="p-5 overflow-y-auto flex-1 space-y-4 text-xs">
-              {resultTab === 'testcase' ? (
-                /* Testcase View */
-                <div className="space-y-3">
-                  {(() => {
-                    const testCases = (qData?.test_cases && qData.test_cases.length > 0)
-                      ? qData.test_cases
-                      : (qData?.sample_input || qData?.sample_output)
-                      ? [{ id: 'sample1', input: qData.sample_input || '', expected_output: qData.sample_output || '' }]
-                      : (runResult?.results && runResult.results.length > 0)
-                      ? runResult.results.map((r, i) => ({ id: i, input: r.input || '(Standard Input)', expected_output: r.expected_output || '—' }))
-                      : [];
+            {/* Panel Body */}
+            {!isTestPanelCollapsed && (
+              <div className="p-3.5 overflow-y-auto flex-1 text-xs space-y-3">
+                {resultTab === 'testcase' ? (
+                  /* Testcase View */
+                  <div className="space-y-3">
+                    {(() => {
+                      const testCases = (qData?.test_cases && qData.test_cases.length > 0)
+                        ? qData.test_cases
+                        : (qData?.sample_input || qData?.sample_output)
+                        ? [{ id: 'sample1', input: qData.sample_input || '', expected_output: qData.sample_output || '' }]
+                        : (runResult?.results && runResult.results.length > 0)
+                        ? runResult.results.map((r, i) => ({ id: i, input: r.input || '(Standard Input)', expected_output: r.expected_output || '—' }))
+                        : [];
 
-                    if (testCases.length === 0) {
+                      if (testCases.length === 0) {
+                        return (
+                          <div className="text-center py-6 text-dark-400">
+                            No sample testcases available for preview.
+                          </div>
+                        );
+                      }
+
+                      const activeTc = testCases[activeCaseIdx] || testCases[0];
+
                       return (
-                        <div className="text-center py-6 text-dark-400">
-                          No sample testcases available for preview.
-                        </div>
+                        <>
+                          <div className="flex items-center gap-2">
+                            {testCases.map((tc, idx) => (
+                              <button
+                                key={tc.id || idx}
+                                type="button"
+                                onClick={() => setActiveCaseIdx(idx)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                                  activeCaseIdx === idx
+                                    ? 'bg-brand-500/20 text-brand-400 font-semibold border border-brand-500/40 shadow'
+                                    : 'bg-dark-800 text-dark-400 hover:text-dark-200 hover:bg-dark-700'
+                                }`}
+                              >
+                                Case {idx + 1}
+                              </button>
+                            ))}
+                          </div>
+                          {activeTc && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                              <div>
+                                <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
+                                <pre className="bg-dark-950 border border-dark-700/50 rounded-xl px-3.5 py-2 text-xs text-dark-100 font-mono overflow-x-auto max-h-32">
+                                  {activeTc.input || '—'}
+                                </pre>
+                              </div>
+                              <div>
+                                <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected Output</p>
+                                <pre className="bg-dark-950 border border-dark-700/50 rounded-xl px-3.5 py-2 text-xs text-emerald-400 font-mono overflow-x-auto max-h-32">
+                                  {activeTc.expected_output || '—'}
+                                </pre>
+                              </div>
+                            </div>
+                          )}
+                        </>
                       );
-                    }
-
-                    const activeTc = testCases[activeCaseIdx] || testCases[0];
-
-                    return (
+                    })()}
+                  </div>
+                ) : (
+                  /* Test Result View */
+                  <div className="space-y-3">
+                    {!runResult ? (
+                      <div className="text-center py-6 text-dark-400 space-y-1">
+                        <p className="text-xs">No test results available yet.</p>
+                        <p className="text-[11px] text-dark-500">Click <strong className="text-emerald-400">Run Code</strong> above to execute your solution against testcases.</p>
+                      </div>
+                    ) : (
                       <>
+                        {(() => {
+                          const verdict = getVerdict(runResult) || '';
+                          const V = String(verdict).toLowerCase();
+                          const isOk = verdict === 'Accepted';
+                          const verdictColor = isOk
+                            ? 'text-emerald-400'
+                            : V.includes('limit') ? 'text-amber-400'
+                            : 'text-red-400';
+                          const verdictIcon = isOk
+                            ? <HiOutlineCheckCircle className="w-5 h-5" />
+                            : <HiOutlineXCircle className="w-5 h-5" />;
+                          const detailError = runResult.compilation_error || runResult.error || (runResult.results?.[0]?.error) || null;
+                          const shownCase = runResult.results?.[activeCaseIdx] || runResult.results?.[0];
+                          return (
+                            <>
+                              {/* Verdict Header & Runtime/Memory */}
+                              <div className="flex items-center justify-between pb-2 border-b border-dark-800">
+                                <h3 className={`text-base font-extrabold tracking-tight flex items-center gap-2 ${verdictColor}`}>
+                                  {verdictIcon}
+                                  {verdict || 'Result'}
+                                </h3>
+                                <div className="flex items-center gap-3 text-xs text-dark-400 font-mono font-medium">
+                                  {shownCase?.execution_time !== undefined && (
+                                    <span>Runtime: {Math.round((shownCase.execution_time || 0) * 1000)} ms</span>
+                                  )}
+                                  {shownCase?.memory_used !== undefined && (
+                                    <span>Memory: {shownCase.memory_used || 0} KB</span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Real error details — compiler output, runtime tracebacks, etc. */}
+                              {detailError && (
+                                <pre className="bg-red-500/10 border border-red-500/20 text-red-400 p-2.5 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-32">
+                                  {detailError}
+                                </pre>
+                              )}
+                            </>
+                          );
+                        })()}
+
+                        {/* Case Pill Buttons */}
                         <div className="flex items-center gap-2">
-                          {testCases.map((tc, idx) => (
-                            <button
-                              key={tc.id || idx}
-                              onClick={() => setActiveCaseIdx(idx)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                                activeCaseIdx === idx
-                                  ? 'bg-brand-500/20 text-brand-400 font-semibold border border-brand-500/40 shadow'
-                                  : 'bg-dark-800 text-dark-400 hover:text-dark-200 hover:bg-dark-700'
-                              }`}
-                            >
-                              Case {idx + 1}
-                            </button>
-                          ))}
+                          {(runResult.results?.length > 0 ? runResult.results : qData?.test_cases || [])?.map((res, idx) => {
+                            const isPassed = res.passed !== undefined ? res.passed : false;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setActiveCaseIdx(idx)}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                                  activeCaseIdx === idx
+                                    ? isPassed
+                                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold ring-1 ring-emerald-500/30'
+                                      : 'bg-red-500/20 text-red-400 border border-red-500/40 font-semibold ring-1 ring-red-500/30'
+                                    : isPassed
+                                    ? 'bg-emerald-500/10 text-emerald-500/80 hover:bg-emerald-500/20'
+                                    : 'bg-red-500/10 text-red-500/80 hover:bg-red-500/20'
+                                }`}
+                              >
+                                {isPassed ? (
+                                  <HiOutlineCheck className="w-3.5 h-3.5 text-emerald-500" />
+                                ) : (
+                                  <HiOutlineX className="w-3.5 h-3.5 text-red-500" />
+                                )}
+                                Case {idx + 1}
+                              </button>
+                            );
+                          })}
                         </div>
-                        {activeTc && (
-                          <div className="space-y-3 mt-3">
+
+                        {/* Selected Case Inputs / Outputs */}
+                        {runResult.results?.[activeCaseIdx] ? (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
                             <div>
                               <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
-                              <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                                {activeTc.input || '—'}
+                              <pre className="bg-dark-950 border border-dark-700/50 rounded-xl p-2.5 text-xs text-dark-100 font-mono overflow-x-auto max-h-28">
+                                {runResult.results[activeCaseIdx].input !== undefined && runResult.results[activeCaseIdx].input !== null && runResult.results[activeCaseIdx].input !== "" ? runResult.results[activeCaseIdx].input : (qData?.test_cases?.[activeCaseIdx]?.input ? qData.test_cases[activeCaseIdx].input : '(Empty)')}
+                              </pre>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Actual Output</p>
+                              <pre className={`bg-dark-950 border border-dark-700/50 rounded-xl p-2.5 text-xs font-mono overflow-x-auto max-h-28 ${runResult.results[activeCaseIdx].passed ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {runResult.results[activeCaseIdx].actual_output || runResult.results[activeCaseIdx].stdout || '(Empty)'}
                               </pre>
                             </div>
                             <div>
                               <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected Output</p>
-                              <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
-                                {activeTc.expected_output || '—'}
+                              <pre className="bg-dark-950 border border-dark-700/50 rounded-xl p-2.5 text-xs text-emerald-400 font-mono overflow-x-auto max-h-28">
+                                {runResult.results[activeCaseIdx].expected_output || qData?.test_cases?.[activeCaseIdx]?.expected_output || '—'}
+                              </pre>
+                            </div>
+                          </div>
+                        ) : qData?.test_cases?.[activeCaseIdx] && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                            <div>
+                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
+                              <pre className="bg-dark-950 border border-dark-700/50 rounded-xl p-2.5 text-xs text-dark-100 font-mono overflow-x-auto max-h-28">
+                                {qData.test_cases[activeCaseIdx].input}
+                              </pre>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected Output</p>
+                              <pre className="bg-dark-950 border border-dark-700/50 rounded-xl p-2.5 text-xs text-emerald-400 font-mono overflow-x-auto max-h-28">
+                                {qData.test_cases[activeCaseIdx].expected_output}
                               </pre>
                             </div>
                           </div>
                         )}
                       </>
-                    );
-                  })()}
-                </div>
-              ) : (
-                /* Test Result View (LeetCode Style Pop-up) */
-                <div className="space-y-4">
-                  {(() => {
-                    const verdict = getVerdict(runResult) || '';
-                    const V = String(verdict).toLowerCase();
-                    const isOk = verdict === 'Accepted';
-                    const verdictColor = isOk
-                      ? 'text-emerald-500'
-                      : V.includes('limit') ? 'text-amber-500'
-                      : 'text-red-500';
-                    const verdictIcon = isOk
-                      ? <HiOutlineCheckCircle className="w-5 h-5" />
-                      : <HiOutlineXCircle className="w-5 h-5" />;
-                    const detailError = runResult.compilation_error || runResult.error || (runResult.results?.[0]?.error) || null;
-                    const shownCase = runResult.results?.[activeCaseIdx] || runResult.results?.[0];
-                    return (
-                      <>
-                        {/* Verdict Header & Runtime/Memory */}
-                        <div className="flex items-center justify-between pb-1 border-b border-dark-800">
-                          <h3 className={`text-xl font-extrabold tracking-tight flex items-center gap-2 ${verdictColor}`}>
-                            {verdictIcon}
-                            {verdict || 'Result'}
-                          </h3>
-                          <div className="flex items-center gap-3 text-xs text-dark-400 font-mono font-medium">
-                            {shownCase?.execution_time !== undefined && (
-                              <span>Runtime: {Math.round((shownCase.execution_time || 0) * 1000)} ms</span>
-                            )}
-                            {shownCase?.memory_used !== undefined && (
-                              <span>Memory: {shownCase.memory_used || 0} KB</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Real error details — compiler output, runtime tracebacks, etc. */}
-                        {detailError && (
-                          <pre className="bg-red-500/10 border border-red-500/20 text-red-400 p-3.5 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-56">
-                            {detailError}
-                          </pre>
-                        )}
-                      </>
-                    );
-                  })()}
-
-                      {/* Case Pill Buttons */}
-                      <div className="flex items-center gap-2">
-                        {(runResult.results?.length > 0 ? runResult.results : qData?.test_cases || [])?.map((res, idx) => {
-                          const isPassed = res.passed !== undefined ? res.passed : false;
-                          return (
-                            <button
-                              key={idx}
-                              onClick={() => setActiveCaseIdx(idx)}
-                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                                activeCaseIdx === idx
-                                  ? isPassed
-                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold ring-1 ring-emerald-500/30'
-                                    : 'bg-red-500/20 text-red-400 border border-red-500/40 font-semibold ring-1 ring-red-500/30'
-                                  : isPassed
-                                  ? 'bg-emerald-500/10 text-emerald-500/80 hover:bg-emerald-500/20'
-                                  : 'bg-red-500/10 text-red-500/80 hover:bg-red-500/20'
-                              }`}
-                            >
-                              {isPassed ? (
-                                <HiOutlineCheck className="w-3.5 h-3.5 text-emerald-500" />
-                              ) : (
-                                <HiOutlineX className="w-3.5 h-3.5 text-red-500" />
-                              )}
-                              Case {idx + 1}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Selected Case Inputs / Outputs */}
-                      {runResult.results?.[activeCaseIdx] ? (
-                        <div className="space-y-3">
-                          <div>
-                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
-                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                              {runResult.results[activeCaseIdx].input !== undefined && runResult.results[activeCaseIdx].input !== null && runResult.results[activeCaseIdx].input !== "" ? runResult.results[activeCaseIdx].input : (qData?.test_cases?.[activeCaseIdx]?.input ? qData.test_cases[activeCaseIdx].input : '(Empty)')}
-                            </pre>
-                          </div>
-                          <div>
-                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Output</p>
-                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                              {runResult.results[activeCaseIdx].actual_output || runResult.results[activeCaseIdx].stdout || ''}
-                            </pre>
-                          </div>
-                          <div>
-                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected</p>
-                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
-                              {runResult.results[activeCaseIdx].expected_output || qData?.test_cases?.[activeCaseIdx]?.expected_output || ''}
-                            </pre>
-                          </div>
-                        </div>
-                      ) : qData?.test_cases?.[activeCaseIdx] && (
-                        <div className="space-y-3">
-                          <div>
-                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Input</p>
-                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-dark-100 font-mono overflow-x-auto">
-                              {qData.test_cases[activeCaseIdx].input}
-                            </pre>
-                          </div>
-                          <div>
-                            <p className="text-[11px] font-semibold text-dark-400 mb-1">Expected</p>
-                            <pre className="bg-dark-800 border border-dark-700/50 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-mono overflow-x-auto">
-                              {qData.test_cases[activeCaseIdx].expected_output}
-                            </pre>
-                          </div>
-                        </div>
-                      )}
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer: Action Buttons */}
-            <div className="px-5 py-3 border-t border-dark-700/50 bg-dark-950/80 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setRunResult(null)}
-                className="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-              >
-                Close Window
-              </button>
-            </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
       {/* Judge Progress Overlay — Issue 11 staged execution UX */}
       {judgeStage >= 0 && (

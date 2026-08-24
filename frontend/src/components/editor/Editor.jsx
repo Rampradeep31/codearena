@@ -24,6 +24,7 @@ export default function CodeEditor({
   viewMode = 'split',
   onViewModeChange,
   compilationError = null,
+  allowCopyPaste = false,
 }) {
   // ── State ───────────────────────────────────────────────────
   const [language, setLanguage] = useState(initialLanguage || 'python');
@@ -132,10 +133,10 @@ export default function CodeEditor({
       });
     });
 
-    // Intercept copy/paste/cut inside Monaco
+    // Intercept copy/paste/cut inside Monaco if disallowed by admin
     editor.onKeyDown((e) => {
       const isCmdOrCtrl = e.ctrlKey || e.metaKey;
-      if (isCmdOrCtrl && (e.keyCode === monaco.KeyCode.KeyC || e.keyCode === monaco.KeyCode.KeyV || e.keyCode === monaco.KeyCode.KeyX)) {
+      if (!allowCopyPaste && isCmdOrCtrl && (e.keyCode === monaco.KeyCode.KeyC || e.keyCode === monaco.KeyCode.KeyV || e.keyCode === monaco.KeyCode.KeyX)) {
         e.preventDefault();
         e.stopPropagation();
         toast.error('Copy/Paste/Cut is disabled during the examination.');
@@ -247,7 +248,7 @@ export default function CodeEditor({
       />
 
       {/* Monaco Editor Container */}
-      <div className="flex-1 relative w-full min-h-[300px]">
+      <div className="flex-1 relative w-full min-h-[140px]">
         <MonacoEditor
           height="100%"
           language={monacoLang}

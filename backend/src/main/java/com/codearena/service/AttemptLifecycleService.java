@@ -372,6 +372,8 @@ public class AttemptLifecycleService {
                 reason,
                 (double) (attempt.getScore() == null ? 0 : attempt.getScore()),
                 test != null && test.getTotalMarks() != null ? test.getTotalMarks().doubleValue() : null,
-                test != null ? test.getMaxViolations() : 3);
+                test != null ? test.getMaxViolations() : 3,
+                test != null && test.getAllowCopyPaste() != null ? test.getAllowCopyPaste() : false,
+                test != null && test.getAllowedLanguages() != null ? test.getAllowedLanguages() : List.of("python", "java", "c", "cpp"));
     }
 }

@@ -163,6 +163,8 @@ public class AdminDashboardService {
                 reason,
                 (double) (a.getScore() == null ? 0 : a.getScore()),
                 totalMarks != null ? totalMarks.doubleValue() : null,
+                null,
+                null,
                 null);
     }
 
