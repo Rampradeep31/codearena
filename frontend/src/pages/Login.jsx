@@ -55,7 +55,7 @@ export default function Login() {
 
       const { role } = await loginStudentDirect(studentData);
       toast.success(`Welcome, ${name}!`);
-      navigate('/student', { replace: true });
+      navigate('/portal-select', { replace: true });
     } catch (err) {
       console.error(err);
       const msg = getErrorMessage(err, 'Error entering assessment. Please check details.');
@@ -79,7 +79,7 @@ export default function Login() {
     try {
       const { role } = await login(adminEmail, adminPassword);
       toast.success('Admin login successful');
-      navigate(role === 'admin' ? '/admin' : '/student', { replace: true });
+      navigate('/portal-select', { replace: true });
     } catch (err) {
       console.error(err);
       const msg = getErrorMessage(err, 'Admin login failed.');

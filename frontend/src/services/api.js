@@ -13,7 +13,7 @@ const API_BASE_URL =
 const backendApi = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 60000,
+  timeout: 180000,
 });
 
 // Extract the real backend error message from any axios error so the UI
@@ -54,17 +54,29 @@ function rejectWithDetail(error) {
 backendApi.interceptors.request.use((config) => {
   const token = localStorage.getItem('token') || localStorage.getItem('codearena_token');
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+    if (config.headers && typeof config.headers.set === 'function') {
+      config.headers.set('Authorization', `Bearer ${token}`);
+    } else {
+      config.headers = config.headers || {};
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
   }
   return config;
 });
 
 // Response Interceptor for auth + backend errors.
-// Issue 3 & 8: 401/403 are surfaceed as authentication failures (never
-// "Compilation Error"); all other failures keep the real server detail.
 backendApi.interceptors.response.use(
   (response) => response,
-  (error) => rejectWithDetail(error)
+  (error) => {
+    if (error?.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return rejectWithDetail(error);
+  }
 );
 
 // â”€â”€â”€ Auth API (Student Entry & Registration) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -318,6 +330,16 @@ export const adminAPI = {
     return res;
   },
 
+  aiGenerateQuestion: async (data) => {
+    const res = await backendApi.post('/admin/questions/ai-generate', data);
+    return res;
+  },
+
+  aiStandardizeTestCases: async (questionId) => {
+    const res = await backendApi.post(`/admin/questions/${questionId}/ai-standardize-testcases`, {});
+    return res;
+  },
+
   addTestCase: async (questionId, data) => {
     const res = await backendApi.post(`/admin/questions/${questionId}/test-cases`, data);
     return res;
@@ -398,3 +420,5 @@ export const adminAPI = {
     return res;
   },
 };
+
+export { backendApi };

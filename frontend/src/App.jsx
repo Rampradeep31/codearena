@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
+import PortalSelect from './pages/PortalSelect';
 import AdminLayout from './components/admin/AdminLayout';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import Students from './pages/admin/Students';
@@ -16,6 +17,15 @@ import ExamInstructions from './pages/student/ExamInstructions';
 import ExamInterface from './pages/student/ExamInterface';
 import TestComplete from './pages/student/TestComplete';
 import CameraTest from './pages/CameraTest';
+// GATE module
+import GateAdminLayout from './pages/gate/admin/GateAdminLayout';
+import GateAdminDashboard from './pages/gate/admin/GateAdminDashboard';
+import GateQuestionBank from './pages/gate/admin/GateQuestionBank';
+import GateTests from './pages/gate/admin/GateTests';
+import GateResults from './pages/gate/admin/GateResults';
+import GateStudentDashboard from './pages/gate/student/GateStudentDashboard';
+import GateExamInterface from './pages/gate/student/GateExamInterface';
+import GateResult from './pages/gate/student/GateResult';
 
 function getStoredUser() {
   try {
@@ -37,7 +47,7 @@ function ProtectedRoute({ children, role }) {
   if (loading) return <LoadingScreen />;
   if (!activeAuth) return <Navigate to="/login" replace />;
   if (role && activeUser && activeUser.role !== role) {
-    return <Navigate to={activeUser.role === 'admin' ? '/admin' : '/student/tests/1/instructions'} replace />;
+    return <Navigate to="/portal-select" replace />;
   }
   return children;
 }
@@ -58,7 +68,10 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
 
-      {/* Admin Routes */}
+      {/* Portal Selection — shown after every login */}
+      <Route path="/portal-select" element={<ProtectedRoute><PortalSelect /></ProtectedRoute>} />
+
+      {/* Admin Routes (Coding portal — untouched) */}
       <Route path="/admin" element={<ProtectedRoute role="admin"><AdminLayout /></ProtectedRoute>}>
         <Route index element={<AdminDashboard />} />
         <Route path="students" element={<Students />} />
@@ -73,11 +86,24 @@ export default function App() {
         <Route path="violations" element={<Violations />} />
       </Route>
 
-      {/* Student Routes */}
+      {/* Student Routes (Coding portal — untouched) */}
       <Route path="/student" element={<ProtectedRoute role="student"><StudentDashboard /></ProtectedRoute>} />
       <Route path="/student/tests/:testId/instructions" element={<ProtectedRoute role="student"><ExamInstructions /></ProtectedRoute>} />
       <Route path="/student/exam/:attemptId" element={<ProtectedRoute role="student"><ExamInterface /></ProtectedRoute>} />
       <Route path="/student/exam/:attemptId/complete" element={<ProtectedRoute role="student"><TestComplete /></ProtectedRoute>} />
+
+      {/* GATE Admin Routes */}
+      <Route path="/gate/admin" element={<ProtectedRoute role="admin"><GateAdminLayout /></ProtectedRoute>}>
+        <Route index element={<GateAdminDashboard />} />
+        <Route path="questions" element={<GateQuestionBank />} />
+        <Route path="tests" element={<GateTests />} />
+        <Route path="results" element={<GateResults />} />
+      </Route>
+
+      {/* GATE Student Routes — accessible to any authenticated user */}
+      <Route path="/gate/student" element={<ProtectedRoute><GateStudentDashboard /></ProtectedRoute>} />
+      <Route path="/gate/student/exam/:attemptId" element={<ProtectedRoute><GateExamInterface /></ProtectedRoute>} />
+      <Route path="/gate/student/result/:attemptId" element={<ProtectedRoute><GateResult /></ProtectedRoute>} />
 
       {/* Demo / Camera Test Route */}
       <Route path="/camera-test" element={<CameraTest />} />
