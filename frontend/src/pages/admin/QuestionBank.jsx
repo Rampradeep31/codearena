@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { 
   HiOutlinePlus, HiOutlineSearch, HiOutlinePencil, HiOutlineTrash, 
   HiOutlineArrowLeft, HiOutlineCollection, HiOutlineFolder, HiOutlineCalendar, 
-  HiOutlineUser, HiOutlineClock, HiOutlineChevronRight
+  HiOutlineUser, HiOutlineClock, HiOutlineChevronRight, HiOutlineSparkles
 } from 'react-icons/hi';
 
 const difficultyColors = { 
@@ -32,6 +32,12 @@ export default function QuestionBank() {
   const [qSearch, setQSearch] = useState('');
   const [qDifficulty, setQDifficulty] = useState('');
   const [loadingQuestions, setLoadingQuestions] = useState(false);
+
+  // AI Modal State
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [generatingAi, setGeneratingAi] = useState(false);
+  const [standardizingIds, setStandardizingIds] = useState({});
 
   // Bank Modal State
   const [showModal, setShowModal] = useState(false);
@@ -180,6 +186,47 @@ export default function QuestionBank() {
     }
   };
 
+  const handleAiGenerate = async (e) => {
+    e.preventDefault();
+    if (!aiPrompt.trim()) {
+      toast.error('Please enter a description or LeetCode number');
+      return;
+    }
+    setGeneratingAi(true);
+    const toastId = toast.loading('Generating question and 8 test cases with AI...');
+    try {
+      await adminAPI.aiGenerateQuestion({
+        prompt: aiPrompt,
+        question_bank_id: parseInt(selectedBank.id)
+      });
+      toast.success('Question and 8 test cases generated successfully!', { id: toastId });
+      setShowAiModal(false);
+      setAiPrompt('');
+      loadBankDetails(selectedBank.id);
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Error generating question with AI', { id: toastId });
+    } finally {
+      setGeneratingAi(false);
+    }
+  };
+
+  const handleAiStandardize = async (questionId) => {
+    if (!confirm('Are you sure you want to standardize this question? This will regenerate and replace all test cases to exactly 8 test cases (2 public, 6 hidden) using AI.')) return;
+    setStandardizingIds(prev => ({ ...prev, [questionId]: true }));
+    const toastId = toast.loading('Standardizing test cases with AI...');
+    try {
+      await adminAPI.aiStandardizeTestCases(questionId);
+      toast.success('Test cases standardized to exactly 8 (2 public, 6 hidden)!', { id: toastId });
+      loadBankDetails(selectedBank.id);
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Error standardizing test cases', { id: toastId });
+    } finally {
+      setStandardizingIds(prev => ({ ...prev, [questionId]: false }));
+    }
+  };
+
   const openCreateModal = () => {
     setEditingBank(null);
     setModalForm({
@@ -241,6 +288,12 @@ export default function QuestionBank() {
               className="px-3 py-2 bg-dark-800 border border-dark-600/50 hover:border-dark-500 text-dark-300 hover:text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
             >
               Edit Bank Info
+            </button>
+            <button 
+              onClick={() => setShowAiModal(true)} 
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+            >
+              <HiOutlineSparkles className="w-4 h-4" /> Generate with AI
             </button>
             <Link 
               to={`/admin/questions/new?bank_id=${selectedBank.id}`} 
@@ -312,6 +365,14 @@ export default function QuestionBank() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 ml-4">
+                    <button 
+                      onClick={() => handleAiStandardize(q.id)} 
+                      disabled={standardizingIds[q.id]}
+                      className="p-1.5 text-dark-400 hover:text-emerald-400 disabled:opacity-50 transition-colors cursor-pointer" 
+                      title="AI Standardize Test Cases (Make exactly 8: 2 public, 6 hidden)"
+                    >
+                      <HiOutlineSparkles className={`w-4.5 h-4.5 ${standardizingIds[q.id] ? 'animate-spin' : ''}`} />
+                    </button>
                     <Link to={`/admin/questions/${q.id}`} className="p-1.5 text-dark-400 hover:text-brand-400 transition-colors" title="Edit Question"><HiOutlinePencil className="w-4.5 h-4.5" /></Link>
                     <button onClick={() => handleDeleteQuestion(q.id)} className="p-1.5 text-dark-400 hover:text-red-400 transition-colors cursor-pointer" title="Delete Question"><HiOutlineTrash className="w-4.5 h-4.5" /></button>
                   </div>
@@ -323,6 +384,7 @@ export default function QuestionBank() {
 
         {/* Modal for editing selected bank info */}
         {showModal && renderBankModal()}
+        {showAiModal && renderAiModal()}
       </div>
     );
   }
@@ -584,6 +646,62 @@ export default function QuestionBank() {
                 className="px-5 py-2 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
               >
                 {submitting ? 'Saving...' : editingBank ? 'Save Changes' : 'Create Question Bank'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // AI Question Generation Modal
+  function renderAiModal() {
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fade-in backdrop-blur-xs">
+        <div className="bg-dark-900 border border-dark-700/50 rounded-xl max-w-lg w-full p-6 shadow-2xl relative">
+          <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+            <HiOutlineSparkles className="w-5 h-5 text-emerald-400" />
+            Generate & Import with AI
+          </h2>
+          <p className="text-dark-400 text-xs mb-4">
+            Type a LeetCode problem number (e.g. <code>1</code>, <code>206</code>), a topic (e.g. <code>Binary Tree Path Sum</code>), or paste a raw problem statement. The AI will automatically generate the question details and exactly 8 test cases (2 public, 6 hidden).
+          </p>
+
+          <form onSubmit={handleAiGenerate} className="space-y-4">
+            <div>
+              <label className={labelClass}>AI Prompt / LeetCode Info</label>
+              <textarea 
+                value={aiPrompt} 
+                onChange={(e) => setAiPrompt(e.target.value)} 
+                placeholder="e.g. 1926 or 'Reverse a linked list' or paste problem text..." 
+                required 
+                rows={5}
+                className={inputClass + ' resize-y font-mono text-sm'} 
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button 
+                type="button" 
+                onClick={() => { setShowAiModal(false); setAiPrompt(''); }} 
+                className="px-4 py-2 text-sm text-dark-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                disabled={generatingAi} 
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
+              >
+                {generatingAi ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Generating...
+                  </>
+                ) : 'Generate & Upload'}
               </button>
             </div>
           </form>

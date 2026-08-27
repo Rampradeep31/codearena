@@ -235,13 +235,13 @@ export default function StudentDashboard() {
           <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-brand-500/20 bg-brand-500/10 text-brand-300 text-xs font-semibold mb-3">
-                <HiOutlineSparkles className="w-4 h-4 text-brand-400" /> Assessment Category Selection
+                <HiOutlineSparkles className="w-4 h-4 text-brand-400" /> Coding Assessment Portal
               </div>
               <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
                 Welcome, {user?.name ? user.name.split(' ')[0] : 'Student'}!
               </h2>
               <p className="text-sm text-dark-300 mt-2 max-w-2xl">
-                Choose a domain category below to view and launch your scheduled assessments, practice sets, and live proctored tests.
+                Launch and complete your assigned coding tests, practice sets, and live proctored assessments.
               </p>
             </div>
 
@@ -262,93 +262,7 @@ export default function StudentDashboard() {
           </div>
         </section>
 
-        {/* 4 General Test Category Cards */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-white">Select Assessment Category</h2>
-              <p className="text-xs text-dark-400">Explore domain-specific examination tracks</p>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {CATEGORIES.map((cat) => {
-              const Icon = cat.icon;
-              const isSelected = activeCategory === cat.id;
-              const catActiveCount = filterByCategory(tests.active, cat.id).length;
-              const catTotalCount = filterByCategory([...tests.active, ...tests.upcoming, ...tests.completed], cat.id).length;
-
-              return (
-                <div
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={`relative p-5 rounded-2xl border transition-all cursor-pointer bg-gradient-to-b ${cat.color} ${
-                    isSelected 
-                      ? `${cat.activeRing} shadow-xl shadow-brand-500/10` 
-                      : 'border-dark-700/50 bg-dark-900/60 hover:bg-dark-850 hover:border-dark-600'
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center border ${cat.iconBg}`}>
-                      <Icon className="w-6 h-6" />
-                    </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${cat.badgeColor}`}>
-                      {cat.badge}
-                    </span>
-                  </div>
-
-                  <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
-                    {cat.name}
-                    {isSelected && <HiOutlineCheckCircle className="w-4 h-4 text-brand-400" />}
-                  </h3>
-                  <p className="text-xs text-dark-400 mb-4 line-clamp-2">{cat.description}</p>
-
-                  <div className="pt-3 border-t border-dark-700/40 flex items-center justify-between text-xs">
-                    <span className="text-dark-400">
-                      {cat.id === 'coding' 
-                        ? `${catTotalCount} Tests Assigned`
-                        : catTotalCount > 0 ? `${catTotalCount} Tests` : 'Practice Track'}
-                    </span>
-                    {catActiveCount > 0 ? (
-                      <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 font-bold rounded-full text-[10px] animate-pulse">
-                        {catActiveCount} Live Now
-                      </span>
-                    ) : (
-                      <span className="text-dark-500 text-[11px] flex items-center gap-1">
-                        View Track <HiOutlineChevronRight className="w-3 h-3" />
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Selected Category Header */}
-        <div className="flex items-center justify-between pt-2 border-t border-dark-700/50">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-dark-400">Active View:</span>
-            <span className="px-3 py-1 bg-brand-500/10 border border-brand-500/30 text-brand-300 font-bold rounded-xl text-xs flex items-center gap-1.5">
-              {CATEGORIES.find(c => c.id === activeCategory)?.name} Tests
-            </span>
-          </div>
-          <div className="flex gap-2">
-            {CATEGORIES.map(c => (
-              <button
-                key={c.id}
-                onClick={() => setActiveCategory(c.id)}
-                className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                  activeCategory === c.id 
-                    ? 'bg-dark-700 text-white shadow-sm' 
-                    : 'text-dark-400 hover:text-dark-200'
-                }`}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* Category Domain Track View */}
         {activeCategory !== 'coding' && categoryActiveTests.length === 0 && (
