@@ -1,6 +1,7 @@
 HELP.md
 target/
 *.log
+.exam-jwt-secret.local
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
