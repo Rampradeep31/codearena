@@ -1,5 +1,6 @@
 package com.codearena.controller.admin;
 
+import com.codearena.dto.request.AiGenerateQuestionRequest;
 import com.codearena.dto.request.QuestionCreate;
 import com.codearena.dto.request.TestCaseCreate;
 import com.codearena.dto.response.QuestionOut;
@@ -90,5 +91,18 @@ public class AdminQuestionController {
         admin();
         service.deleteTestCase(id);
         return Map.of("message", "Test case deleted");
+    }
+
+    @PostMapping("/questions/ai-generate")
+    @ResponseStatus(HttpStatus.CREATED)
+    public List<QuestionOut> aiGenerate(@Valid @RequestBody AiGenerateQuestionRequest request) {
+        admin();
+        return service.aiGenerateQuestion(request);
+    }
+
+    @PostMapping("/questions/{id}/ai-standardize-testcases")
+    public QuestionOut aiStandardizeTestCases(@PathVariable Long id) {
+        admin();
+        return service.aiStandardizeTestCases(id);
     }
 }

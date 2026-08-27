@@ -43,7 +43,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     // hit via direct browser navigation without a token 401s instead of
     // falling back to the SPA, matching the Python single-service app's
     // own pre-existing router-registration-order behavior exactly.
-    private static final List<String> API_PATH_PREFIXES = List.of("/auth", "/admin", "/student", "/code");
+    private static final List<String> API_PATH_PREFIXES = List.of("/auth", "/admin", "/student", "/code", "/gate");
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
